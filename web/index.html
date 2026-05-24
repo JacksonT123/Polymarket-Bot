@@ -1,634 +1,700 @@
 <!DOCTYPE html>
-<html lang="en" x-data="botApp()" x-init="init()">
+<html lang="en" x-data="app()" x-init="boot()">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Polymarket Bot</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <style>
-    :root {
-      --bg:       #080c14;
-      --surface:  #0d1117;
-      --card:     #111827;
-      --border:   #1f2937;
-      --border2:  #374151;
-      --text:     #f1f5f9;
-      --muted:    #6b7280;
-      --muted2:   #9ca3af;
-      --cyan:     #22d3ee;
-      --cyan-dim: rgba(34,211,238,0.12);
-      --green:    #4ade80;
-      --green-dim:rgba(74,222,128,0.12);
-      --red:      #f87171;
-      --red-dim:  rgba(248,113,113,0.12);
-      --amber:    #fbbf24;
-      --amber-dim:rgba(251,191,36,0.12);
-      --purple:   #a78bfa;
-    }
-    * { box-sizing: border-box; }
-    [x-cloak] { display: none !important; }
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Polymarket Bot — Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+:root {
+  --bg:      #000000;
+  --s0:      #030508;
+  --s1:      #080d15;
+  --s2:      #0d1520;
+  --border:  rgba(255,255,255,0.06);
+  --border2: rgba(255,255,255,0.10);
+  --text:    #e8f0fe;
+  --muted:   #4a5568;
+  --muted2:  #718096;
+  --cyan:    #00d4f5;
+  --cyanD:   rgba(0,212,245,0.10);
+  --cyanG:   rgba(0,212,245,0.04);
+  --green:   #00e87a;
+  --greenD:  rgba(0,232,122,0.10);
+  --red:     #ff3355;
+  --redD:    rgba(255,51,85,0.10);
+  --amber:   #f59e0b;
+  --amberD:  rgba(245,158,11,0.10);
+  --purple:  #a78bfa;
+  --purpleD: rgba(167,139,250,0.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[x-cloak]{display:none!important}
+html,body{height:100%;overflow:hidden}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:'Space Grotesk',sans-serif;font-size:13px;line-height:1.5;
+  display:flex;flex-direction:column;
+}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:2px}
 
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Inter', sans-serif;
-      font-size: 14px;
-      line-height: 1.5;
-      min-height: 100vh;
-    }
+/* ── Layout ──────────────────────────────────── */
+#shell{display:flex;flex:1;overflow:hidden}
+#sidebar{
+  width:220px;min-width:220px;
+  background:var(--s0);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;
+  transition:width .2s ease,min-width .2s ease;
+  overflow:hidden;
+}
+#sidebar.collapsed{width:52px;min-width:52px}
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#topbar{
+  height:48px;min-height:48px;
+  background:rgba(0,0,0,0.9);
+  backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;
+  padding:0 1.25rem;gap:1rem;
+  position:relative;z-index:20;
+}
+#content{flex:1;overflow-y:auto;padding:1rem;background:var(--s0)}
 
-    /* ── Scrollbar ─────────────────────────────── */
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+/* ── Ticker tape ─────────────────────────────── */
+#ticker{
+  flex:1;overflow:hidden;
+  display:flex;align-items:center;gap:0;
+  mask-image:linear-gradient(90deg,transparent,black 60px,black calc(100% - 60px),transparent);
+}
+.tick-wrap{display:flex;gap:0;animation:scroll-tick 30s linear infinite}
+.tick-wrap:hover{animation-play-state:paused}
+.tick-item{
+  display:flex;align-items:center;gap:0.5rem;
+  padding:0 1.5rem;border-right:1px solid var(--border);
+  white-space:nowrap;font-size:12px;
+}
+.tick-label{color:var(--muted2);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.tick-val{font-family:'JetBrains Mono',monospace;font-weight:500}
+@keyframes scroll-tick{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
 
-    /* ── Cards ─────────────────────────────────── */
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1.25rem;
-    }
-    .card-glow {
-      box-shadow: 0 0 0 1px var(--border), 0 4px 24px rgba(0,0,0,0.4);
-    }
+/* ── Sidebar nav ─────────────────────────────── */
+.logo-row{
+  height:52px;display:flex;align-items:center;
+  padding:0 1rem;gap:0.75rem;
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.logo-mark{
+  width:28px;height:28px;flex-shrink:0;border-radius:7px;
+  background:linear-gradient(135deg,var(--cyan),var(--purple));
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:13px;color:#000;letter-spacing:-1px;
+}
+.logo-text{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden}
+.logo-sub{font-size:10px;color:var(--muted);line-height:1}
 
-    /* ── Stat cards ─────────────────────────────── */
-    .stat-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1.1rem 1.25rem;
-      position: relative;
-      overflow: hidden;
-    }
-    .stat-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, transparent, var(--accent, var(--cyan)), transparent);
-      opacity: 0.7;
-    }
-    .stat-card.green  { --accent: var(--green); }
-    .stat-card.red    { --accent: var(--red); }
-    .stat-card.amber  { --accent: var(--amber); }
-    .stat-card.purple { --accent: var(--purple); }
+.nav-section{padding:.75rem .75rem .25rem;overflow:hidden}
+.nav-label{font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:0 .25rem;margin-bottom:.4rem;white-space:nowrap}
+.nav-item{
+  display:flex;align-items:center;gap:.6rem;
+  padding:.42rem .5rem;border-radius:7px;cursor:pointer;
+  color:var(--muted2);font-weight:500;font-size:13px;
+  transition:all .12s;white-space:nowrap;
+  border:1px solid transparent;
+}
+.nav-item:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.nav-item.active{
+  color:var(--cyan);background:var(--cyanD);
+  border-color:rgba(0,212,245,.15);
+}
+.nav-item svg{flex-shrink:0;width:15px;height:15px}
 
-    /* ── Header ─────────────────────────────────── */
-    .header-bar {
-      background: rgba(13,17,23,0.9);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 50;
-    }
+/* ── Sidebar status ──────────────────────────── */
+.sys-panel{
+  margin-top:auto;
+  border-top:1px solid var(--border);
+  padding:.75rem;overflow:hidden;
+}
+.sys-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:.28rem .25rem;font-size:11px;
+}
+.sys-row-left{display:flex;align-items:center;gap:.45rem;color:var(--muted2);white-space:nowrap}
+.sys-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sys-dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+.sys-dot.warn{background:var(--amber)}
+.sys-dot.err{background:var(--red);box-shadow:0 0 6px var(--red)}
+.sys-dot.pulse{background:var(--cyan);box-shadow:0 0 6px var(--cyan);animation:sys-pulse 2s ease-in-out infinite}
+@keyframes sys-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
 
-    /* ── Nav ────────────────────────────────────── */
-    .nav-tab {
-      padding: 0.5rem 1rem;
-      border-radius: 6px;
-      color: var(--muted);
-      font-weight: 500;
-      font-size: 13px;
-      cursor: pointer;
-      transition: all 0.15s;
-      border: 1px solid transparent;
-    }
-    .nav-tab:hover { color: var(--text); background: rgba(255,255,255,0.04); }
-    .nav-tab.active {
-      color: var(--cyan);
-      background: var(--cyan-dim);
-      border-color: rgba(34,211,238,0.2);
-    }
+/* ── Cards ───────────────────────────────────── */
+.card{
+  background:var(--s1);
+  border:1px solid var(--border);
+  border-radius:10px;overflow:hidden;
+}
+.card-pad{padding:1rem 1.1rem}
+.card-title{
+  font-size:10px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);margin-bottom:.85rem;
+}
 
-    /* ── Tables ─────────────────────────────────── */
-    .data-table { width: 100%; border-collapse: collapse; }
-    .data-table th {
-      text-align: left;
-      padding: 0.4rem 0.75rem;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--muted);
-      border-bottom: 1px solid var(--border);
-    }
-    .data-table th.right { text-align: right; }
-    .data-table td {
-      padding: 0.6rem 0.75rem;
-      border-bottom: 1px solid rgba(31,41,55,0.6);
-      color: var(--text);
-    }
-    .data-table td.right { text-align: right; }
-    .data-table td.mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
-    .data-table td.muted { color: var(--muted2); font-size: 12px; }
-    .data-table tbody tr { transition: background 0.1s; }
-    .data-table tbody tr:hover { background: rgba(255,255,255,0.02); }
-    .data-table tbody tr:last-child td { border-bottom: none; }
+/* ── KPI cards ───────────────────────────────── */
+.kpi{
+  background:var(--s1);border:1px solid var(--border);
+  border-radius:10px;padding:1rem 1.1rem;position:relative;overflow:hidden;
+}
+.kpi::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:1.5px;
+  background:linear-gradient(90deg,transparent,var(--kpi-color,var(--cyan)),transparent);
+}
+.kpi-label{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem}
+.kpi-value{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:600;line-height:1;margin-bottom:.35rem}
+.kpi-sub{font-size:11px;color:var(--muted2)}
 
-    /* ── Badges ─────────────────────────────────── */
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-    }
-    .badge-green  { background: var(--green-dim);  color: var(--green);  border: 1px solid rgba(74,222,128,0.2); }
-    .badge-red    { background: var(--red-dim);    color: var(--red);    border: 1px solid rgba(248,113,113,0.2); }
-    .badge-amber  { background: var(--amber-dim);  color: var(--amber);  border: 1px solid rgba(251,191,36,0.2); }
-    .badge-cyan   { background: var(--cyan-dim);   color: var(--cyan);   border: 1px solid rgba(34,211,238,0.2); }
-    .badge-purple { background: rgba(167,139,250,0.12); color: var(--purple); border: 1px solid rgba(167,139,250,0.2); }
+/* ── Tables ──────────────────────────────────── */
+.t{width:100%;border-collapse:collapse}
+.t th{
+  padding:.4rem .75rem;font-size:9px;font-weight:700;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  border-bottom:1px solid var(--border);text-align:left;
+  white-space:nowrap;
+}
+.t th.r{text-align:right}
+.t td{
+  padding:.55rem .75rem;border-bottom:1px solid rgba(255,255,255,.03);
+  font-size:12px;
+}
+.t td.r{text-align:right}
+.t td.mono{font-family:'JetBrains Mono',monospace;font-size:11.5px}
+.t td.dim{color:var(--muted2)}
+.t tbody tr:hover{background:rgba(255,255,255,.015)}
+.t tbody tr:last-child td{border-bottom:none}
 
-    /* ── PnL ─────────────────────────────────────── */
-    .pos { color: var(--green); }
-    .neg { color: var(--red); }
+/* ── Badges ──────────────────────────────────── */
+.b{display:inline-flex;align-items:center;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.05em}
+.b-green {background:var(--greenD);color:var(--green); border:1px solid rgba(0,232,122,.2)}
+.b-red   {background:var(--redD);  color:var(--red);   border:1px solid rgba(255,51,85,.2)}
+.b-cyan  {background:var(--cyanD); color:var(--cyan);  border:1px solid rgba(0,212,245,.2)}
+.b-amber {background:var(--amberD);color:var(--amber); border:1px solid rgba(245,158,11,.2)}
+.b-purple{background:var(--purpleD);color:var(--purple);border:1px solid rgba(167,139,250,.2)}
+.b-gray  {background:rgba(255,255,255,.05);color:var(--muted2);border:1px solid var(--border)}
 
-    /* ── Live dot ────────────────────────────────── */
-    .live-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 6px var(--green);
-      animation: pulse-dot 2s ease-in-out infinite;
-    }
-    @keyframes pulse-dot {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%       { opacity: 0.5; transform: scale(0.8); }
-    }
+/* ── P&L ─────────────────────────────────────── */
+.pos{color:var(--green)}
+.neg{color:var(--red)}
 
-    /* ── Signal feed row ─────────────────────────── */
-    .feed-row {
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-      padding: 0.45rem 0;
-      border-bottom: 1px solid rgba(31,41,55,0.5);
-      font-size: 12px;
-      animation: slide-in 0.2s ease;
-    }
-    @keyframes slide-in {
-      from { opacity: 0; transform: translateY(-4px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    .feed-row:last-child { border-bottom: none; }
+/* ── Event log ───────────────────────────────── */
+.ev{
+  display:flex;align-items:flex-start;gap:.6rem;
+  padding:.45rem .1rem;border-bottom:1px solid rgba(255,255,255,.03);
+  font-size:11.5px;animation:ev-in .18s ease;
+}
+.ev:last-child{border-bottom:none}
+@keyframes ev-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.ev-time{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);min-width:54px;padding-top:1px;flex-shrink:0}
+.ev-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.ev-body{flex:1;min-width:0}
+.ev-type{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
 
-    /* ── Funnel bar ──────────────────────────────── */
-    .funnel-row { padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
-    .funnel-row:last-child { border-bottom: none; }
-    .funnel-bar-bg { background: rgba(255,255,255,0.05); border-radius: 3px; height: 4px; margin-top: 5px; }
-    .funnel-bar-fill { height: 4px; border-radius: 3px; background: var(--cyan); transition: width 0.5s ease; }
+/* ── Position cards ──────────────────────────── */
+.pos-card{
+  background:var(--s2);border:1px solid var(--border);
+  border-radius:9px;padding:.85rem 1rem;
+  transition:border-color .15s;
+}
+.pos-card:hover{border-color:var(--border2)}
+.pos-pnl{
+  font-family:'JetBrains Mono',monospace;
+  font-size:20px;font-weight:600;line-height:1;
+}
 
-    /* ── Section header ──────────────────────────── */
-    .section-title {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--muted2);
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      margin-bottom: 0.85rem;
-    }
+/* ── Funnel bar ──────────────────────────────── */
+.fbar-bg{height:3px;background:rgba(255,255,255,.06);border-radius:2px;margin-top:6px}
+.fbar-fill{height:3px;border-radius:2px;background:var(--cyan);transition:width .5s ease}
 
-    /* ── Button ──────────────────────────────────── */
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.4rem;
-      padding: 0.45rem 1rem;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.15s;
-      border: 1px solid transparent;
-    }
-    .btn-primary {
-      background: var(--cyan-dim);
-      color: var(--cyan);
-      border-color: rgba(34,211,238,0.25);
-    }
-    .btn-primary:hover { background: rgba(34,211,238,0.2); }
-    .btn-ghost { background: transparent; color: var(--muted2); border-color: var(--border2); }
-    .btn-ghost:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+/* ── Toasts ──────────────────────────────────── */
+#toasts{position:fixed;bottom:1.25rem;right:1.25rem;z-index:999;display:flex;flex-direction:column-reverse;gap:.5rem}
+.toast{
+  display:flex;align-items:flex-start;gap:.6rem;
+  padding:.7rem 1rem;
+  border-radius:8px;border:1px solid var(--t-border,var(--border));
+  background:var(--s2);
+  backdrop-filter:blur(12px);
+  min-width:260px;max-width:340px;
+  box-shadow:0 8px 32px rgba(0,0,0,.6);
+  animation:toast-in .2s ease;
+  font-size:12.5px;
+}
+@keyframes toast-in{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}
+.toast.fill   {--t-border:rgba(0,232,122,.25)}
+.toast.signal {--t-border:rgba(0,212,245,.2)}
+.toast.warn   {--t-border:rgba(245,158,11,.25)}
+.toast.err    {--t-border:rgba(255,51,85,.25)}
+.toast-icon{width:18px;height:18px;border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+.toast.fill   .toast-icon{background:var(--greenD);color:var(--green)}
+.toast.signal .toast-icon{background:var(--cyanD);color:var(--cyan)}
+.toast.warn   .toast-icon{background:var(--amberD);color:var(--amber)}
+.toast.err    .toast-icon{background:var(--redD);color:var(--red)}
+.toast-body{flex:1}
+.toast-title{font-weight:600;margin-bottom:1px}
+.toast-msg{color:var(--muted2);font-size:11px}
+.toast-close{color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+.toast-close:hover{color:var(--text)}
 
-    /* ── Select ──────────────────────────────────── */
-    select {
-      background: var(--card);
-      border: 1px solid var(--border2);
-      color: var(--text);
-      border-radius: 6px;
-      padding: 0.3rem 0.6rem;
-      font-size: 13px;
-      outline: none;
-      cursor: pointer;
-    }
+/* ── Win buttons ─────────────────────────────── */
+.win-btn{padding:2px 7px;border-radius:4px;font-size:11px;cursor:pointer;color:var(--muted);transition:all .1s;font-family:'Space Grotesk',sans-serif}
+.win-btn:hover{color:var(--text)}
+.win-btn.on{background:var(--cyanD);color:var(--cyan)}
 
-    /* ── Equity window buttons ───────────────────── */
-    .win-btn { padding: 2px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; color: var(--muted); transition: all 0.1s; }
-    .win-btn:hover { color: var(--text); }
-    .win-btn.active { background: var(--cyan-dim); color: var(--cyan); }
+/* ── Section grid ────────────────────────────── */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.75rem}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem}
 
-    /* ── Empty state ─────────────────────────────── */
-    .empty { text-align: center; padding: 2.5rem; color: var(--muted); font-size: 13px; }
+/* ── Empty state ─────────────────────────────── */
+.empty{text-align:center;padding:2.5rem;color:var(--muted);font-size:12px}
 
-    /* ── Divider ─────────────────────────────────── */
-    .divider { border: none; border-top: 1px solid var(--border); margin: 0; }
-  </style>
+/* ── Tab content fade ────────────────────────── */
+[x-show]{animation:fade-in .15s ease}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+
+/* ── Btn ─────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;padding:.38rem .9rem;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;transition:all .12s;font-family:'Space Grotesk',sans-serif}
+.btn-cyan{background:var(--cyanD);color:var(--cyan);border:1px solid rgba(0,212,245,.2)}
+.btn-cyan:hover{background:rgba(0,212,245,.18)}
+.btn-ghost{background:transparent;color:var(--muted2);border:1px solid var(--border2)}
+.btn-ghost:hover{color:var(--text);background:rgba(255,255,255,.04)}
+
+select{background:var(--s1);border:1px solid var(--border2);color:var(--text);border-radius:6px;padding:.28rem .55rem;font-size:12px;outline:none;cursor:pointer;font-family:'Space Grotesk',sans-serif}
+
+/* ── Progress ring ───────────────────────────── */
+.ring{transform:rotate(-90deg)}
+.ring-track{fill:none;stroke:rgba(255,255,255,.06)}
+.ring-fill{fill:none;stroke:var(--cyan);stroke-linecap:round;transition:stroke-dashoffset .6s ease}
+
+@media(max-width:1200px){.g4{grid-template-columns:1fr 1fr}.g3{grid-template-columns:1fr 1fr}}
+@media(max-width:900px){.g4{grid-template-columns:1fr}.g2{grid-template-columns:1fr}.g3{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
 
-  <!-- ═══════════════════ HEADER ═══════════════════ -->
-  <header class="header-bar px-5 py-3 flex items-center justify-between gap-4">
-    <div class="flex items-center gap-3">
-      <!-- Logo -->
-      <div style="background:linear-gradient(135deg,#22d3ee,#a78bfa);border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#080c14;flex-shrink:0;">P</div>
-      <div>
-        <div style="font-weight:700;font-size:15px;letter-spacing:-0.01em;">Polymarket Bot</div>
-        <div style="font-size:11px;color:var(--muted);">Copy Trading Terminal</div>
-      </div>
+<!-- ╔══════════════════════════════╗ -->
+<!-- ║  TOP TICKER TAPE             ║ -->
+<!-- ╚══════════════════════════════╝ -->
+<div style="height:32px;min-height:32px;background:var(--s0);border-bottom:1px solid var(--border);display:flex;align-items:center;overflow:hidden;position:relative;z-index:30;">
+  <div style="padding:0 .75rem;font-size:9px;font-weight:700;letter-spacing:.12em;color:var(--muted);border-right:1px solid var(--border);height:100%;display:flex;align-items:center;flex-shrink:0;white-space:nowrap;">LIVE</div>
+  <div id="ticker" style="flex:1;overflow:hidden;">
+    <div class="tick-wrap" id="tick-inner">
+      <div class="tick-item"><span class="tick-label">Equity</span><span class="tick-val" id="tk-eq" style="color:var(--cyan)">—</span></div>
+      <div class="tick-item"><span class="tick-label">Daily P&L</span><span class="tick-val" id="tk-dpnl">—</span></div>
+      <div class="tick-item"><span class="tick-label">All-Time</span><span class="tick-val" id="tk-apnl">—</span></div>
+      <div class="tick-item"><span class="tick-label">Positions</span><span class="tick-val" id="tk-pos">—</span></div>
+      <div class="tick-item"><span class="tick-label">Active Wallets</span><span class="tick-val" id="tk-wl">—</span></div>
+      <div class="tick-item"><span class="tick-label">Shadow Pool</span><span class="tick-val" id="tk-sh">—</span></div>
+      <div class="tick-item"><span class="tick-label">Queue</span><span class="tick-val" id="tk-q">—</span></div>
+      <div class="tick-item"><span class="tick-label">Mode</span><span class="tick-val" id="tk-mode" style="color:var(--amber)">—</span></div>
+      <!-- duplicate for seamless loop -->
+      <div class="tick-item"><span class="tick-label">Equity</span><span class="tick-val" id="tk-eq2" style="color:var(--cyan)">—</span></div>
+      <div class="tick-item"><span class="tick-label">Daily P&L</span><span class="tick-val" id="tk-dpnl2">—</span></div>
+      <div class="tick-item"><span class="tick-label">All-Time</span><span class="tick-val" id="tk-apnl2">—</span></div>
+      <div class="tick-item"><span class="tick-label">Positions</span><span class="tick-val" id="tk-pos2">—</span></div>
+      <div class="tick-item"><span class="tick-label">Active Wallets</span><span class="tick-val" id="tk-wl2">—</span></div>
+      <div class="tick-item"><span class="tick-label">Shadow Pool</span><span class="tick-val" id="tk-sh2">—</span></div>
+      <div class="tick-item"><span class="tick-label">Queue</span><span class="tick-val" id="tk-q2">—</span></div>
+      <div class="tick-item"><span class="tick-label">Mode</span><span class="tick-val" id="tk-mode2" style="color:var(--amber)">—</span></div>
     </div>
+  </div>
+  <div style="padding:0 .75rem;font-size:10px;color:var(--muted);border-left:1px solid var(--border);height:100%;display:flex;align-items:center;flex-shrink:0;font-family:'JetBrains Mono',monospace;" x-text="clock"></div>
+</div>
 
-    <!-- Status pills -->
-    <div class="flex items-center gap-3">
-      <span class="badge badge-amber" x-text="mode"></span>
-      <div style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--card);border:1px solid var(--border);border-radius:6px;font-size:12px;">
-        <div class="live-dot" x-show="wsConnected"></div>
-        <div style="width:7px;height:7px;border-radius:50%;background:var(--red);flex-shrink:0;" x-show="!wsConnected"></div>
-        <span x-text="wsConnected ? 'Live' : 'Offline'" :style="wsConnected ? 'color:var(--green)' : 'color:var(--red)'"></span>
-      </div>
-      <div style="font-size:12px;color:var(--muted);" x-text="lastUpdate"></div>
+<div id="shell">
+
+<!-- ╔══════════════════════════════╗ -->
+<!-- ║  SIDEBAR                     ║ -->
+<!-- ╚══════════════════════════════╝ -->
+<div id="sidebar" :class="sideCollapsed ? 'collapsed' : ''">
+
+  <div class="logo-row">
+    <div class="logo-mark">P</div>
+    <div x-show="!sideCollapsed" x-cloak>
+      <div class="logo-text">Polymarket</div>
+      <div class="logo-sub">Copy Bot v2.3</div>
     </div>
-  </header>
+  </div>
 
-  <!-- ═══════════════════ NAV ════════════════════ -->
-  <nav style="background:var(--surface);border-bottom:1px solid var(--border);padding:0.5rem 1.25rem;display:flex;gap:0.25rem;overflow-x:auto;">
+  <div class="nav-section">
+    <div class="nav-label" x-show="!sideCollapsed" x-cloak>Navigation</div>
     <template x-for="tab in tabs" :key="tab.id">
-      <button
-        @click="activeTab = tab.id"
-        :class="activeTab === tab.id ? 'nav-tab active' : 'nav-tab'"
-        x-text="tab.label"
-      ></button>
+      <div class="nav-item" :class="activeTab===tab.id?'active':''" @click="activeTab=tab.id">
+        <span x-html="tab.icon"></span>
+        <span x-show="!sideCollapsed" x-cloak x-text="tab.label" style="overflow:hidden;text-overflow:ellipsis"></span>
+      </div>
     </template>
-  </nav>
+  </div>
 
-  <!-- ═══════════════════ CONTENT ═══════════════════ -->
-  <main style="padding:1.25rem;max-width:1600px;margin:0 auto;">
+  <!-- System status -->
+  <div class="sys-panel">
+    <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem;" x-show="!sideCollapsed" x-cloak>Systems</div>
+    <div class="sys-row">
+      <div class="sys-row-left">
+        <div class="sys-dot" :class="health.db"></div>
+        <span x-show="!sideCollapsed" x-cloak>Database</span>
+      </div>
+      <span x-show="!sideCollapsed" x-cloak style="font-size:10px;color:var(--muted2);" x-text="health.db==='ok'?'OK':'ERR'"></span>
+    </div>
+    <div class="sys-row">
+      <div class="sys-row-left">
+        <div class="sys-dot" :class="wsConn?'pulse':'err'"></div>
+        <span x-show="!sideCollapsed" x-cloak>WebSocket</span>
+      </div>
+      <span x-show="!sideCollapsed" x-cloak style="font-size:10px;" :style="wsConn?'color:var(--cyan)':'color:var(--red)'" x-text="wsConn?'LIVE':'DOWN'"></span>
+    </div>
+    <div class="sys-row">
+      <div class="sys-row-left">
+        <div class="sys-dot" :class="health.api"></div>
+        <span x-show="!sideCollapsed" x-cloak>API</span>
+      </div>
+      <span x-show="!sideCollapsed" x-cloak style="font-size:10px;color:var(--muted2);" x-text="health.api==='ok'?'OK':'ERR'"></span>
+    </div>
+    <div class="sys-row">
+      <div class="sys-row-left">
+        <div class="sys-dot" :class="metrics.killswitch_active?'err':'ok'"></div>
+        <span x-show="!sideCollapsed" x-cloak>Killswitch</span>
+      </div>
+      <span x-show="!sideCollapsed" x-cloak style="font-size:10px;" :style="metrics.killswitch_active?'color:var(--red)':'color:var(--green)'" x-text="metrics.killswitch_active?'ACTIVE':'OFF'"></span>
+    </div>
 
-    <!-- ── OVERVIEW ─────────────────────────────── -->
-    <div x-show="activeTab === 'overview'" x-cloak>
+    <!-- collapse toggle -->
+    <div @click="sideCollapsed=!sideCollapsed" style="display:flex;align-items:center;justify-content:center;margin-top:.75rem;padding:.35rem;border-radius:6px;cursor:pointer;color:var(--muted);background:rgba(255,255,255,.03);border:1px solid var(--border)" :title="sideCollapsed?'Expand':'Collapse'">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path x-bind:d="sideCollapsed?'M9 18l6-6-6-6':'M15 18l-6-6 6-6'"/>
+      </svg>
+    </div>
+  </div>
+</div>
 
-      <!-- KPI Row -->
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:0.75rem;" class="kpi-grid">
+<!-- ╔══════════════════════════════╗ -->
+<!-- ║  MAIN                        ║ -->
+<!-- ╚══════════════════════════════╝ -->
+<div id="main">
 
-        <div class="stat-card green">
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;">Total Equity</div>
-          <div style="font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text);" x-text="'$' + (equity.total_equity || 0).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})"></div>
-          <div style="margin-top:0.35rem;font-size:12px;" :class="(equity.daily_pnl||0)>=0?'pos':'neg'">
-            <span x-text="((equity.daily_pnl||0)>=0?'+':'')+' $'+(equity.daily_pnl||0).toFixed(2)+' today'"></span>
-          </div>
+  <!-- Top bar -->
+  <div id="topbar">
+    <div style="display:flex;align-items:center;gap:.6rem;flex-shrink:0">
+      <span style="font-weight:600;font-size:14px;" x-text="tabs.find(t=>t.id===activeTab)?.label||''"></span>
+      <span class="b b-amber" x-text="mode" style="font-size:9px"></span>
+    </div>
+    <!-- refresh -->
+    <div style="display:flex;align-items:center;gap:.5rem;margin-left:auto;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:.4rem;font-size:11px;color:var(--muted)">
+        <div style="width:5px;height:5px;border-radius:50%;" :style="wsConn?'background:var(--green);box-shadow:0 0 6px var(--green)':'background:var(--red)'"></div>
+        <span x-text="wsConn?'Live':'Disconnected'"></span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;" x-text="'↻ '+lastUpdate"></div>
+    </div>
+  </div>
+
+  <!-- Content area -->
+  <div id="content">
+
+    <!-- ═══════════ OVERVIEW ═══════════ -->
+    <div x-show="activeTab==='overview'" x-cloak>
+
+      <!-- KPI row -->
+      <div class="g4" style="margin-bottom:.75rem">
+        <div class="kpi" style="--kpi-color:var(--cyan)">
+          <div class="kpi-label">Total Equity</div>
+          <div class="kpi-value" style="color:var(--cyan)" id="kpi-eq">$0.00</div>
+          <div class="kpi-sub">Cash: <span style="color:var(--text);font-family:'JetBrains Mono',monospace" id="kpi-cash">$0</span></div>
         </div>
-
-        <div class="stat-card" :class="(equity.all_time_pnl||0)>=0?'green':'red'">
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;">All-Time P&L</div>
-          <div style="font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;" :class="(equity.all_time_pnl||0)>=0?'pos':'neg'" x-text="((equity.all_time_pnl||0)>=0?'+':'')+' $'+(equity.all_time_pnl||0).toFixed(2)"></div>
-          <div style="margin-top:0.35rem;font-size:12px;color:var(--muted);">
-            <span x-text="'Cash: $'+(equity.cash_balance||0).toFixed(0)"></span>
-          </div>
+        <div class="kpi" :style="'--kpi-color:'+(equity.daily_pnl>=0?'var(--green)':'var(--red)')">
+          <div class="kpi-label">Daily P&L</div>
+          <div class="kpi-value" :class="(equity.daily_pnl||0)>=0?'pos':'neg'" id="kpi-dpnl">—</div>
+          <div class="kpi-sub">Weekly: <span :class="(equity.weekly_pnl||0)>=0?'pos':'neg'" style="font-family:'JetBrains Mono',monospace" x-text="((equity.weekly_pnl||0)>=0?'+':'')+' $'+(equity.weekly_pnl||0).toFixed(2)"></span></div>
         </div>
-
-        <div class="stat-card cyan">
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;">Open Positions</div>
-          <div style="font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--cyan);" x-text="openPositions.length"></div>
-          <div style="margin-top:0.35rem;font-size:12px;color:var(--muted);">
-            <span x-text="'Deployed: $'+(equity.deployed_usd||0).toFixed(0)"></span>
-          </div>
+        <div class="kpi" style="--kpi-color:var(--purple)">
+          <div class="kpi-label">Open Positions</div>
+          <div class="kpi-value" style="color:var(--purple);font-family:'JetBrains Mono',monospace" x-text="openPositions.length"></div>
+          <div class="kpi-sub">Deployed: <span style="font-family:'JetBrains Mono',monospace;color:var(--text)" x-text="'$'+(equity.position_value||0).toFixed(0)"></span></div>
         </div>
-
-        <div class="stat-card purple">
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;">Wallets</div>
-          <div style="font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--purple);">
-            <span x-text="activeWallets.length"></span>
-            <span style="font-size:14px;color:var(--muted);font-weight:400;"> active</span>
-          </div>
-          <div style="margin-top:0.35rem;font-size:12px;color:var(--muted);">
-            <span x-text="shadowWallets.length+' in shadow pool'"></span>
-          </div>
+        <div class="kpi" style="--kpi-color:var(--amber)">
+          <div class="kpi-label">Wallet Pool</div>
+          <div class="kpi-value" style="color:var(--amber);font-family:'JetBrains Mono',monospace"><span x-text="activeWallets.length"></span><span style="font-size:13px;color:var(--muted);font-weight:400"> active</span></div>
+          <div class="kpi-sub">Shadow: <span style="font-family:'JetBrains Mono',monospace;color:var(--text)" x-text="shadowWallets.length"></span></div>
         </div>
       </div>
 
-      <!-- Equity chart + tier -->
-      <div style="display:grid;grid-template-columns:1fr 280px;gap:0.75rem;margin-bottom:0.75rem;" class="chart-grid">
-
-        <div class="card card-glow">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
-            <div class="section-title" style="margin-bottom:0;">Equity Curve</div>
-            <div style="display:flex;gap:4px;">
-              <template x-for="w in ['1d','7d','30d','all']" :key="w">
-                <button @click="loadEquityChart(w)" :class="equityWindow===w?'win-btn active':'win-btn'" x-text="w"></button>
-              </template>
-            </div>
-          </div>
-          <div id="equity-chart" style="height:190px;"></div>
-        </div>
+      <!-- Chart + event log -->
+      <div style="display:grid;grid-template-columns:1fr 320px;gap:.75rem;margin-bottom:.75rem">
 
         <div class="card">
-          <div class="section-title">Tier Status</div>
-          <div style="text-align:center;padding:0.5rem 0 1rem;">
-            <div style="font-size:48px;font-weight:800;color:var(--cyan);line-height:1;font-family:'JetBrains Mono',monospace;" x-text="tier"></div>
-            <div style="color:var(--muted);font-size:12px;margin-top:4px;">Current Tier</div>
-          </div>
-          <hr class="divider" style="margin-bottom:0.75rem;">
-          <div style="display:flex;flex-direction:column;gap:0.5rem;">
-            <div style="display:flex;justify-content:space-between;font-size:13px;">
-              <span style="color:var(--muted);">Trade Size</span>
-              <span style="font-family:'JetBrains Mono',monospace;color:var(--green);" x-text="tradeSize"></span>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:13px;">
-              <span style="color:var(--muted);">Slots Used</span>
-              <span style="font-family:'JetBrains Mono',monospace;" x-text="slots"></span>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:13px;">
-              <span style="color:var(--muted);">Mode</span>
-              <span class="badge badge-amber" x-text="mode"></span>
+          <div class="card-pad" style="padding-bottom:.5rem">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div class="card-title" style="margin-bottom:0">Equity Curve</div>
+              <div style="display:flex;gap:3px">
+                <template x-for="w in ['1d','7d','30d','all']" :key="w">
+                  <button @click="loadChart(w)" :class="eqWin===w?'win-btn on':'win-btn'" x-text="w"></button>
+                </template>
+              </div>
             </div>
           </div>
-          <hr class="divider" style="margin-top:0.75rem;margin-bottom:0.75rem;">
-          <!-- Circuit breakers -->
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.5rem;">Breakers</div>
-          <div style="display:flex;flex-direction:column;gap:0.3rem;font-size:12px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="color:var(--muted);">Daily P&L</span>
-              <span class="badge badge-green">OK</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="color:var(--muted);">Weekly</span>
-              <span class="badge badge-green">OK</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="color:var(--muted);">Killswitch</span>
-              <span :class="metrics.killswitch_active ? 'badge badge-red' : 'badge badge-green'" x-text="metrics.killswitch_active ? 'ACTIVE' : 'OFF'"></span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Positions + Signal feed -->
-      <div style="display:grid;grid-template-columns:1fr 360px;gap:0.75rem;margin-bottom:0.75rem;" class="pos-grid">
-
-        <!-- Open positions -->
-        <div class="card">
-          <div class="section-title">Open Positions <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;" x-text="'('+openPositions.length+')'"></span></div>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Market</th>
-                <th>Side</th>
-                <th class="right">Entry</th>
-                <th class="right">Now</th>
-                <th class="right">Cost</th>
-                <th class="right">P&L</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="p in openPositions" :key="p.id">
-                <tr>
-                  <td class="mono muted" x-text="(p.market_id||'').slice(0,28)+'…'"></td>
-                  <td><span :class="p.side==='YES'?'badge badge-green':'badge badge-red'" x-text="p.side"></span></td>
-                  <td class="right mono" x-text="(p.entry_price||0).toFixed(3)"></td>
-                  <td class="right mono" x-text="p.current_price?p.current_price.toFixed(3):'—'"></td>
-                  <td class="right mono" x-text="'$'+(p.cost_usd||0).toFixed(2)"></td>
-                  <td class="right mono" :class="(p.unrealized_pnl_usd||0)>=0?'pos':'neg'" x-text="((p.unrealized_pnl_usd||0)>=0?'+':'')+' $'+(p.unrealized_pnl_usd||0).toFixed(2)"></td>
-                </tr>
-              </template>
-              <tr x-show="openPositions.length===0">
-                <td colspan="6" class="empty">No open positions</td>
-              </tr>
-            </tbody>
-          </table>
+          <div id="equity-chart" style="height:170px"></div>
         </div>
 
-        <!-- Live signal feed -->
-        <div class="card" style="display:flex;flex-direction:column;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem;">
-            <div class="section-title" style="margin-bottom:0;">Signal Feed</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--green);">
-              <div class="live-dot" style="width:5px;height:5px;"></div>
-              LIVE
+        <!-- Event log -->
+        <div class="card" style="display:flex;flex-direction:column">
+          <div class="card-pad" style="padding-bottom:.5rem;flex-shrink:0">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div class="card-title" style="margin-bottom:0">Live Events</div>
+              <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--green)">
+                <div style="width:5px;height:5px;border-radius:50%;background:var(--green);animation:sys-pulse 2s ease-in-out infinite"></div>
+                STREAMING
+              </div>
             </div>
           </div>
-          <div style="overflow-y:auto;flex:1;max-height:220px;" id="signal-feed">
-            <template x-for="(s,i) in signalFeed.slice(0,30)" :key="i">
-              <div class="feed-row">
-                <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;min-width:56px;font-size:11px;" x-text="s.ts"></span>
-                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="s.text"></span>
-                <span :class="s.ok?'badge badge-green':'badge badge-amber'" style="font-size:10px;" x-text="s.ok?'FILL':'SKIP'"></span>
+          <div style="flex:1;overflow-y:auto;padding:0 .75rem .75rem">
+            <template x-for="(e,i) in events.slice(0,40)" :key="i">
+              <div class="ev">
+                <span class="ev-time" x-text="e.ts"></span>
+                <div class="ev-dot" :style="'background:'+e.color"></div>
+                <div class="ev-body">
+                  <div class="ev-type" :style="'color:'+e.color" x-text="e.type"></div>
+                  <div style="color:var(--muted2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="e.msg"></div>
+                </div>
               </div>
             </template>
-            <div x-show="signalFeed.length===0" class="empty" style="padding:1.5rem;">Waiting for signals…</div>
+            <div x-show="events.length===0" class="empty" style="padding:1.5rem">Waiting for activity…</div>
           </div>
         </div>
+      </div>
+
+      <!-- Positions -->
+      <div style="margin-bottom:.75rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Open Positions <span style="color:var(--purple);font-family:'JetBrains Mono',monospace" x-text="'('+openPositions.length+')'"></span></div>
+          <div x-show="openPositions.length>0" style="font-size:10px;color:var(--muted2)">Click row to copy position ID</div>
+        </div>
+        <div x-show="openPositions.length>0" :style="'display:grid;gap:.5rem;grid-template-columns:repeat('+Math.min(openPositions.length,3)+',1fr)'">
+          <template x-for="p in openPositions" :key="p.id">
+            <div class="pos-card">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:.6rem">
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:10px;color:var(--muted);margin-bottom:2px">Market</div>
+                  <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'JetBrains Mono',monospace" x-text="(p.market_id||'').slice(0,30)"></div>
+                </div>
+                <span :class="p.side==='YES'?'b b-green':'b b-red'" style="margin-left:.5rem;flex-shrink:0" x-text="p.side"></span>
+              </div>
+              <div class="pos-pnl" :class="(p.unrealized_pnl_usd||0)>=0?'pos':'neg'" x-text="((p.unrealized_pnl_usd||0)>=0?'+':'')+' $'+(p.unrealized_pnl_usd||0).toFixed(2)"></div>
+              <div style="display:flex;gap:1rem;margin-top:.5rem;font-size:11px;color:var(--muted2)">
+                <span>Entry <span style="color:var(--text);font-family:'JetBrains Mono',monospace" x-text="(p.entry_price||0).toFixed(3)"></span></span>
+                <span>Now <span :class="p.current_price?(p.current_price>p.entry_price?'pos':'neg'):''" style="font-family:'JetBrains Mono',monospace" x-text="p.current_price?p.current_price.toFixed(3):'—'"></span></span>
+                <span>Cost <span style="color:var(--text);font-family:'JetBrains Mono',monospace" x-text="'$'+(p.cost_usd||0).toFixed(2)"></span></span>
+              </div>
+              <!-- mini p&l bar -->
+              <div style="margin-top:.6rem;height:2px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden">
+                <div :style="'width:'+Math.min(100,Math.abs((p.unrealized_pnl_usd||0)/(p.cost_usd||1)*100))+'%;height:100%;border-radius:2px;background:'+(p.unrealized_pnl_usd>=0?'var(--green)':'var(--red)')"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div x-show="openPositions.length===0" class="card"><div class="empty">No open positions yet</div></div>
       </div>
 
       <!-- Active wallets -->
       <div class="card">
-        <div class="section-title">Active Lead Wallets <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;" x-text="'('+activeWallets.length+')'"></span></div>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Address</th>
-              <th>Category</th>
-              <th class="right">Score</th>
-              <th class="right">Win Rate</th>
-              <th class="right">Profit Factor</th>
-              <th class="right">Capture</th>
-              <th>Status</th>
-            </tr>
-          </thead>
+        <div class="card-pad" style="padding-bottom:.5rem">
+          <div class="card-title" style="margin-bottom:0">Active Lead Wallets</div>
+        </div>
+        <table class="t">
+          <thead><tr>
+            <th>Address</th><th>Category</th>
+            <th class="r">Score</th><th class="r">Win Rate</th>
+            <th class="r">Profit Factor</th><th class="r">Capture</th><th>Status</th>
+          </tr></thead>
           <tbody>
             <template x-for="w in activeWallets" :key="w.address">
               <tr>
-                <td class="mono" x-text="w.address.slice(0,12)+'…'+w.address.slice(-4)"></td>
-                <td class="muted" x-text="w.primary_category||'—'"></td>
-                <td class="right mono" style="color:var(--cyan);" x-text="(w.composite_score||0).toFixed(2)"></td>
-                <td class="right mono" x-text="((w.win_rate||0)*100).toFixed(0)+'%'"></td>
-                <td class="right mono" x-text="(w.profit_factor||0).toFixed(2)"></td>
-                <td class="right mono" :class="(w.recent_capture_ratio||0)>=0.6?'pos':''" x-text="w.recent_capture_ratio?((w.recent_capture_ratio)*100).toFixed(0)+'%':'n/a'"></td>
-                <td><span class="badge badge-green" x-text="w.status"></span></td>
+                <td class="mono dim" x-text="w.address.slice(0,10)+'…'+w.address.slice(-6)"></td>
+                <td class="dim" x-text="w.primary_category||'—'"></td>
+                <td class="r mono" style="color:var(--cyan)" x-text="(w.composite_score||0).toFixed(3)"></td>
+                <td class="r mono" x-text="((w.win_rate||0)*100).toFixed(1)+'%'"></td>
+                <td class="r mono" x-text="(w.profit_factor||0).toFixed(2)"></td>
+                <td class="r mono" :class="(w.recent_capture_ratio||0)>=0.6?'pos':''" x-text="w.recent_capture_ratio?((w.recent_capture_ratio)*100).toFixed(0)+'%':'—'"></td>
+                <td><span class="b b-green">ACTIVE</span></td>
               </tr>
             </template>
             <tr x-show="activeWallets.length===0">
-              <td colspan="7" class="empty">No active wallets — funnel running</td>
+              <td colspan="7" class="empty">No active wallets — shadow pool running</td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- ── WALLETS TAB ──────────────────────────── -->
-    <div x-show="activeTab === 'wallets'" x-cloak>
+    <!-- ═══════════ WALLETS ═══════════ -->
+    <div x-show="activeTab==='wallets'" x-cloak>
       <div class="card">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
-          <div class="section-title" style="margin-bottom:0;">Wallet Pool</div>
-          <select x-model="walletStatusFilter" @change="loadWallets()">
-            <option value="active">Active</option>
-            <option value="shadow">Shadow</option>
-            <option value="bench">Bench</option>
-            <option value="suspended">Suspended</option>
-            <option value="disqualified">Disqualified</option>
-          </select>
+        <div class="card-pad" style="padding-bottom:.5rem">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div class="card-title" style="margin-bottom:0">Wallet Pool</div>
+            <select x-model="walletFilter" @change="loadWallets()">
+              <option value="active">Active</option>
+              <option value="shadow">Shadow</option>
+              <option value="bench">Bench</option>
+              <option value="suspended">Suspended</option>
+              <option value="disqualified">Disqualified</option>
+            </select>
+          </div>
         </div>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Address</th>
-              <th>Category</th>
-              <th class="right">Score</th>
-              <th class="right">Win Rate</th>
-              <th class="right">Profit Factor</th>
-              <th class="right">Trades</th>
-              <th class="right">Capture</th>
-            </tr>
-          </thead>
+        <table class="t">
+          <thead><tr>
+            <th>Address</th><th>Category</th>
+            <th class="r">Score</th><th class="r">Win Rate</th>
+            <th class="r">Profit Factor</th><th class="r">Trades</th>
+            <th class="r">Capture</th><th class="r">Shadow P&L</th>
+          </tr></thead>
           <tbody>
             <template x-for="w in wallets" :key="w.address">
-              <tr style="cursor:pointer;" @click="selectedWallet=w">
-                <td class="mono" x-text="w.address.slice(0,14)+'…'+w.address.slice(-4)"></td>
-                <td class="muted" x-text="w.primary_category||'—'"></td>
-                <td class="right mono" style="color:var(--cyan);" x-text="(w.composite_score||0).toFixed(3)"></td>
-                <td class="right mono" x-text="((w.win_rate||0)*100).toFixed(1)+'%'"></td>
-                <td class="right mono" x-text="(w.profit_factor||0).toFixed(2)"></td>
-                <td class="right mono" x-text="w.closed_trades_count||0"></td>
-                <td class="right mono" :class="(w.recent_capture_ratio||0)>=0.6?'pos':((w.recent_capture_ratio||0)>0?'':'muted')" x-text="w.recent_capture_ratio?((w.recent_capture_ratio)*100).toFixed(0)+'%':'n/a'"></td>
-              </tr>
-            </template>
-            <tr x-show="wallets.length===0">
-              <td colspan="7" class="empty">No wallets with this status</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ── POSITIONS TAB ────────────────────────── -->
-    <div x-show="activeTab === 'positions'" x-cloak>
-      <div class="card">
-        <div class="section-title">All Open Positions</div>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Market</th>
-              <th>Side</th>
-              <th class="right">Entry</th>
-              <th class="right">Current</th>
-              <th class="right">Shares</th>
-              <th class="right">Cost</th>
-              <th class="right">Unrealized P&L</th>
-              <th>Opened</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="p in openPositions" :key="p.id">
               <tr>
-                <td class="muted mono" x-text="p.id"></td>
-                <td class="mono muted" style="max-width:200px;" x-text="(p.market_id||'').slice(0,32)"></td>
-                <td><span :class="p.side==='YES'?'badge badge-green':'badge badge-red'" x-text="p.side"></span></td>
-                <td class="right mono" x-text="(p.entry_price||0).toFixed(4)"></td>
-                <td class="right mono" x-text="p.current_price?p.current_price.toFixed(4):'—'"></td>
-                <td class="right mono" x-text="(p.size_shares||0).toFixed(2)"></td>
-                <td class="right mono" x-text="'$'+(p.cost_usd||0).toFixed(2)"></td>
-                <td class="right mono" :class="(p.unrealized_pnl_usd||0)>=0?'pos':'neg'" x-text="((p.unrealized_pnl_usd||0)>=0?'+':'')+' $'+(p.unrealized_pnl_usd||0).toFixed(2)"></td>
-                <td class="muted" x-text="p.opened_at?new Date(p.opened_at).toLocaleString():''"></td>
+                <td class="mono" style="font-size:11px" x-text="w.address.slice(0,14)+'…'+w.address.slice(-4)"></td>
+                <td class="dim" x-text="w.primary_category||'—'"></td>
+                <td class="r mono" style="color:var(--cyan)" x-text="(w.composite_score||0).toFixed(3)"></td>
+                <td class="r mono" x-text="((w.win_rate||0)*100).toFixed(1)+'%'"></td>
+                <td class="r mono" x-text="(w.profit_factor||0).toFixed(2)"></td>
+                <td class="r mono" x-text="w.closed_trades_count||0"></td>
+                <td class="r mono" :class="(w.recent_capture_ratio||0)>=0.6?'pos':''" x-text="w.recent_capture_ratio?((w.recent_capture_ratio)*100).toFixed(0)+'%':'—'"></td>
+                <td class="r mono" :class="(w.shadow_pnl_usd||0)>=0?'pos':'neg'" x-text="w.shadow_pnl_usd!=null?((w.shadow_pnl_usd>=0?'+':'')+' $'+w.shadow_pnl_usd.toFixed(2)):'—'"></td>
               </tr>
             </template>
-            <tr x-show="openPositions.length===0">
-              <td colspan="9" class="empty">No open positions</td>
-            </tr>
+            <tr x-show="wallets.length===0"><td colspan="8" class="empty">No wallets with this status</td></tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- ── SIGNALS TAB ──────────────────────────── -->
-    <div x-show="activeTab === 'signals'" x-cloak>
+    <!-- ═══════════ POSITIONS ═══════════ -->
+    <div x-show="activeTab==='positions'" x-cloak>
+      <div class="g2" style="margin-bottom:.75rem">
+        <div class="card">
+          <div class="card-pad" style="padding-bottom:.5rem"><div class="card-title" style="margin-bottom:0">Live Positions</div></div>
+          <table class="t">
+            <thead><tr>
+              <th>#</th><th>Market</th><th>Side</th>
+              <th class="r">Entry</th><th class="r">Current</th>
+              <th class="r">Cost</th><th class="r">Unrealized P&L</th>
+            </tr></thead>
+            <tbody>
+              <template x-for="p in openPositions" :key="p.id">
+                <tr>
+                  <td class="mono dim" x-text="p.id"></td>
+                  <td class="mono dim" x-text="(p.market_id||'').slice(0,28)"></td>
+                  <td><span :class="p.side==='YES'?'b b-green':'b b-red'" x-text="p.side"></span></td>
+                  <td class="r mono" x-text="(p.entry_price||0).toFixed(4)"></td>
+                  <td class="r mono" :class="p.current_price>p.entry_price?'pos':p.current_price<p.entry_price?'neg':''" x-text="p.current_price?p.current_price.toFixed(4):'—'"></td>
+                  <td class="r mono" x-text="'$'+(p.cost_usd||0).toFixed(2)"></td>
+                  <td class="r mono" :class="(p.unrealized_pnl_usd||0)>=0?'pos':'neg'" x-text="((p.unrealized_pnl_usd||0)>=0?'+':'')+' $'+(p.unrealized_pnl_usd||0).toFixed(2)"></td>
+                </tr>
+              </template>
+              <tr x-show="openPositions.length===0"><td colspan="7" class="empty">No open positions</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-pad" style="padding-bottom:.5rem"><div class="card-title" style="margin-bottom:0">Shadow Positions</div></div>
+          <table class="t">
+            <thead><tr>
+              <th>Market</th><th>Side</th><th class="r">Cost</th><th class="r">P&L</th>
+            </tr></thead>
+            <tbody>
+              <template x-for="p in shadowPositions" :key="p.id">
+                <tr>
+                  <td class="mono dim" x-text="(p.market_id||'').slice(0,24)"></td>
+                  <td><span :class="p.side==='YES'?'b b-green':'b b-red'" x-text="p.side"></span></td>
+                  <td class="r mono" x-text="'$'+(p.cost_usd||0).toFixed(2)"></td>
+                  <td class="r mono" :class="(p.unrealized_pnl_usd||0)>=0?'pos':'neg'" x-text="((p.unrealized_pnl_usd||0)>=0?'+':'')+' $'+(p.unrealized_pnl_usd||0).toFixed(2)"></td>
+                </tr>
+              </template>
+              <tr x-show="shadowPositions.length===0"><td colspan="4" class="empty">No shadow positions</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ SIGNALS ═══════════ -->
+    <div x-show="activeTab==='signals'" x-cloak>
       <div class="card">
-        <div class="section-title">Recent Signals</div>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Detected</th>
-              <th>Market</th>
-              <th>Side</th>
-              <th class="right">Price</th>
-              <th class="right">Value</th>
-              <th>Status</th>
-            </tr>
-          </thead>
+        <div class="card-pad" style="padding-bottom:.5rem"><div class="card-title" style="margin-bottom:0">Signal History</div></div>
+        <table class="t">
+          <thead><tr>
+            <th>Time</th><th>Market</th><th>Side</th>
+            <th class="r">Price</th><th class="r">Value</th><th>Status</th>
+          </tr></thead>
           <tbody>
             <template x-for="s in recentSignals" :key="s.id">
               <tr>
-                <td class="muted" x-text="s.detected_at?new Date(s.detected_at).toLocaleString():''"></td>
-                <td class="mono muted" x-text="(s.market_id||'').slice(0,36)"></td>
-                <td><span :class="s.side==='YES'?'badge badge-green':'badge badge-red'" x-text="s.side"></span></td>
-                <td class="right mono" x-text="(s.price||0).toFixed(4)"></td>
-                <td class="right mono" x-text="'$'+(s.value_usd||0).toFixed(2)"></td>
-                <td><span :class="s.status==='executed'?'badge badge-green':'badge badge-amber'" x-text="s.status"></span></td>
+                <td class="mono dim" style="font-size:11px" x-text="s.detected_at?new Date(s.detected_at).toLocaleTimeString():''"></td>
+                <td class="mono dim" x-text="(s.market_id||'').slice(0,34)"></td>
+                <td><span :class="s.side==='YES'?'b b-green':'b b-red'" x-text="s.side"></span></td>
+                <td class="r mono" x-text="(s.price||0).toFixed(4)"></td>
+                <td class="r mono" x-text="'$'+(s.value_usd||0).toFixed(2)"></td>
+                <td><span :class="s.status==='executed'?'b b-green':'b b-amber'" x-text="s.status"></span></td>
               </tr>
             </template>
-            <tr x-show="recentSignals.length===0">
-              <td colspan="6" class="empty">No signals yet</td>
-            </tr>
+            <tr x-show="recentSignals.length===0"><td colspan="6" class="empty">No signals detected yet</td></tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- ── FUNNEL TAB ───────────────────────────── -->
-    <div x-show="activeTab === 'funnel'" x-cloak>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
-
-        <div class="card">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
-            <div class="section-title" style="margin-bottom:0;">Pipeline</div>
-            <button @click="triggerFunnel()" class="btn btn-primary" style="font-size:12px;padding:0.3rem 0.75rem;">
-              ↻ Re-run Funnel
-            </button>
+    <!-- ═══════════ FUNNEL ═══════════ -->
+    <div x-show="activeTab==='funnel'" x-cloak>
+      <div class="g2">
+        <div class="card card-pad">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+            <div class="card-title" style="margin-bottom:0">Pipeline Stages</div>
+            <button @click="runFunnel()" class="btn btn-cyan" style="font-size:11px;padding:.3rem .7rem">↻ Re-run</button>
           </div>
-          <template x-for="[stage, count] in Object.entries(funnelCounts)" :key="stage">
-            <div class="funnel-row">
-              <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span style="text-transform:capitalize;color:var(--muted2);font-size:13px;" x-text="stage"></span>
-                <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:14px;" x-text="count"></span>
+          <template x-for="[stage,count] in Object.entries(funnelCounts)" :key="stage">
+            <div style="padding:.5rem 0;border-bottom:1px solid var(--border)">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="text-transform:capitalize;color:var(--muted2);font-size:13px" x-text="stage"></span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:14px;color:var(--text)" x-text="count"></span>
               </div>
-              <div class="funnel-bar-bg">
-                <div class="funnel-bar-fill" :style="'width:'+Math.min(100, (count/50)*100)+'%'"></div>
-              </div>
+              <div class="fbar-bg"><div class="fbar-fill" :style="'width:'+Math.min(100,(count/100)*100)+'%'"></div></div>
             </div>
           </template>
-          <div x-show="Object.keys(funnelCounts).length===0" class="empty">Loading funnel data…</div>
+          <div x-show="Object.keys(funnelCounts).length===0" class="empty">Loading…</div>
         </div>
 
-        <div class="card">
-          <div class="section-title">Shadow Pool <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;" x-text="'('+shadowWallets.length+')'"></span></div>
+        <div class="card card-pad">
+          <div class="card-title">Shadow Pool <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace" x-text="'('+shadowWallets.length+')'"></span></div>
           <template x-for="w in shadowWallets" :key="w.address">
-            <div style="padding:0.6rem 0;border-bottom:1px solid var(--border);">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
-                <span class="mono" style="font-size:12px;" x-text="w.address.slice(0,14)+'…'+w.address.slice(-4)"></span>
-                <span class="badge badge-purple">Shadow</span>
+            <div style="padding:.65rem 0;border-bottom:1px solid var(--border)">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+                <span class="mono" style="font-size:11px;color:var(--muted2)" x-text="w.address.slice(0,14)+'…'+w.address.slice(-4)"></span>
+                <div style="display:flex;gap:.4rem;align-items:center">
+                  <span class="b b-purple">Shadow</span>
+                  <span class="mono" style="font-size:10px;color:var(--muted)" x-text="(w.shadow_copies_count||0)+'/20 trades'"></span>
+                </div>
               </div>
-              <div style="display:flex;gap:1rem;font-size:12px;">
-                <span style="color:var(--muted);">Copies: <strong x-text="w.shadow_copies_count||0"></strong></span>
-                <span style="color:var(--muted);">P&L: <strong :class="(w.shadow_pnl_usd||0)>=0?'pos':'neg'" x-text="'$'+(w.shadow_pnl_usd||0).toFixed(2)"></strong></span>
-                <span style="color:var(--muted);">Capture: <strong x-text="w.shadow_capture_ratio?((w.shadow_capture_ratio)*100).toFixed(0)+'%':'n/a'"></strong></span>
+              <div style="display:flex;gap:1.25rem;font-size:11px;color:var(--muted2)">
+                <span>P&L <strong :class="(w.shadow_pnl_usd||0)>=0?'pos':'neg'" x-text="'$'+(w.shadow_pnl_usd||0).toFixed(2)"></strong></span>
+                <span>Capture <strong x-text="w.shadow_capture_ratio?((w.shadow_capture_ratio)*100).toFixed(0)+'%':'n/a'"></strong></span>
+                <span>Score <strong style="color:var(--cyan)" x-text="(w.composite_score||0).toFixed(2)"></strong></span>
+              </div>
+              <!-- promotion progress -->
+              <div style="margin-top:.5rem">
+                <div class="fbar-bg">
+                  <div class="fbar-fill" :style="'width:'+Math.min(100,((w.shadow_copies_count||0)/20)*100)+'%;background:'+(w.shadow_pnl_usd>=0?'var(--green)':'var(--amber)')"></div>
+                </div>
               </div>
             </div>
           </template>
@@ -637,210 +703,304 @@
       </div>
     </div>
 
-    <!-- ── SETTINGS TAB ─────────────────────────── -->
-    <div x-show="activeTab === 'settings'" x-cloak>
-      <div style="display:grid;grid-template-columns:1fr 320px;gap:0.75rem;">
-        <div class="card">
-          <div class="section-title">Bot Configuration</div>
-          <table class="data-table">
-            <thead>
-              <tr><th>Setting</th><th class="right">Value</th></tr>
-            </thead>
+    <!-- ═══════════ SETTINGS ═══════════ -->
+    <div x-show="activeTab==='settings'" x-cloak>
+      <div class="g2">
+        <div class="card card-pad">
+          <div class="card-title">Bot Configuration</div>
+          <table class="t">
+            <thead><tr><th>Key</th><th class="r">Value</th></tr></thead>
             <tbody>
-              <template x-for="[k, v] in Object.entries(botConfig)" :key="k">
+              <template x-for="[k,v] in Object.entries(botConfig)" :key="k">
                 <tr>
-                  <td class="muted mono" x-text="k"></td>
-                  <td class="right mono" x-text="String(v)"></td>
+                  <td class="mono dim" x-text="k"></td>
+                  <td class="r mono" x-text="String(v)"></td>
                 </tr>
               </template>
             </tbody>
           </table>
         </div>
-        <div class="card">
-          <div class="section-title">Actions</div>
-          <button @click="testWebhook()" class="btn btn-ghost" style="width:100%;margin-bottom:0.5rem;">
-            Test Webhook
-          </button>
-          <div x-show="actionMsg" style="margin-top:0.75rem;padding:0.5rem 0.75rem;background:var(--green-dim);border:1px solid rgba(74,222,128,0.2);border-radius:6px;font-size:13px;color:var(--green);" x-text="actionMsg"></div>
+        <div class="card card-pad">
+          <div class="card-title">Actions</div>
+          <button @click="testWebhook()" class="btn btn-ghost" style="width:100%;margin-bottom:.5rem">Test Webhook</button>
+          <button @click="runFunnel()" class="btn btn-ghost" style="width:100%;margin-bottom:.5rem">Force Funnel Re-run</button>
+          <div x-show="actionMsg" style="margin-top:.75rem;padding:.5rem .75rem;background:var(--greenD);border:1px solid rgba(0,232,122,.2);border-radius:6px;font-size:12px;color:var(--green)" x-text="actionMsg"></div>
         </div>
       </div>
     </div>
 
-  </main>
+  </div><!-- /content -->
+</div><!-- /main -->
+</div><!-- /shell -->
 
-  <!-- ═══════════════════ SCRIPT ═══════════════════ -->
-  <script>
-    function botApp() {
-      return {
-        activeTab: 'overview',
-        tabs: [
-          { id: 'overview',  label: 'Overview'  },
-          { id: 'wallets',   label: 'Wallets'   },
-          { id: 'positions', label: 'Positions' },
-          { id: 'signals',   label: 'Signals'   },
-          { id: 'funnel',    label: 'Funnel'    },
-          { id: 'settings',  label: 'Settings'  },
-        ],
-        equity: {}, metrics: {},
-        activeWallets: [], openPositions: [],
-        recentSignals: [], signalFeed: [],
-        funnelCounts: {}, shadowWallets: [],
-        wallets: [], walletStatusFilter: 'shadow',
-        botConfig: {},
-        equityWindow: '7d',
-        mode: 'PAPER', tier: 0,
-        tradeSize: '$5', slots: '0/10', deployed: '$0',
-        allClear: true, lastUpdate: '',
-        selectedWallet: null, actionMsg: '',
-        wsConnected: false,
+<!-- ═══════════ TOASTS ═══════════ -->
+<div id="toasts">
+  <template x-for="t in toasts" :key="t.id">
+    <div class="toast" :class="t.type">
+      <div class="toast-icon" x-text="t.icon"></div>
+      <div class="toast-body">
+        <div class="toast-title" x-text="t.title"></div>
+        <div class="toast-msg" x-text="t.msg"></div>
+      </div>
+      <div class="toast-close" @click="dismissToast(t.id)">✕</div>
+    </div>
+  </template>
+</div>
 
-        async init() {
-          await this.loadAll();
-          this.connectWS();
-          setInterval(() => this.loadAll(), 15000);
-        },
+<script>
+function app() {
+  return {
+    // ── UI state ────────────────────────────────
+    activeTab: 'overview',
+    sideCollapsed: false,
+    tabs: [
+      { id:'overview',  label:'Overview',  icon:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>' },
+      { id:'wallets',   label:'Wallets',   icon:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>' },
+      { id:'positions', label:'Positions', icon:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' },
+      { id:'signals',   label:'Signals',   icon:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>' },
+      { id:'funnel',    label:'Funnel',    icon:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>' },
+      { id:'settings',  label:'Settings',  icon:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
+    ],
+    // ── Data ────────────────────────────────────
+    equity:{}, metrics:{},
+    activeWallets:[], openPositions:[], shadowPositions:[],
+    recentSignals:[], funnelCounts:{}, shadowWallets:[],
+    wallets:[], walletFilter:'shadow',
+    botConfig:{},
+    events:[], toasts:[], toastIdCounter:0,
+    eqWin:'7d', mode:'PAPER',
+    lastUpdate:'—', clock:'—',
+    wsConn:false, actionMsg:'',
+    health:{ db:'warn', api:'warn' },
+    // prev values for animated counters
+    _prev: {},
 
-        async loadAll() {
-          await Promise.all([
-            this.loadEquityLatest(),
-            this.loadMetrics(),
-            this.loadActiveWallets(),
-            this.loadPositions(),
-            this.loadSignals(),
-            this.loadFunnel(),
-            this.loadConfig(),
-          ]);
-          this.lastUpdate = new Date().toLocaleTimeString();
-          this.$nextTick(() => this.loadEquityChart(this.equityWindow));
-        },
+    // ── Boot ────────────────────────────────────
+    async boot() {
+      this._startClock();
+      await this.loadAll();
+      this.connectWS();
+      setInterval(() => this.loadAll(), 15000);
+    },
 
-        async loadEquityLatest() {
-          const r = await fetch('/api/equity/latest').catch(() => null);
-          if (r && r.ok) this.equity = await r.json();
-        },
-
-        async loadEquityChart(window = '7d') {
-          this.equityWindow = window;
-          const r = await fetch(`/api/equity/history?window=${window}`).catch(() => null);
-          if (!r || !r.ok) return;
-          const data = await r.json();
-          const x = data.map(d => d.ts);
-          const y = data.map(d => d.total_equity);
-          Plotly.react('equity-chart', [{
-            x, y, type: 'scatter', mode: 'lines',
-            line: { color: '#22d3ee', width: 2 },
-            fill: 'tozeroy', fillcolor: 'rgba(34,211,238,0.06)',
-          }], {
-            margin: { t: 4, b: 28, l: 52, r: 8 },
-            paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
-            xaxis: { color: '#4b5563', gridcolor: 'rgba(31,41,55,0.5)', zeroline: false },
-            yaxis: { color: '#4b5563', gridcolor: 'rgba(31,41,55,0.5)', zeroline: false },
-            font: { color: '#6b7280', size: 11, family: 'Inter' },
-          }, { displayModeBar: false, responsive: true });
-        },
-
-        async loadMetrics() {
-          const r = await fetch('/metrics').catch(() => null);
-          if (r && r.ok) this.metrics = await r.json();
-        },
-
-        async loadActiveWallets() {
-          const r = await fetch('/api/wallets/?status=active').catch(() => null);
-          if (r && r.ok) this.activeWallets = await r.json();
-        },
-
-        async loadWallets() {
-          const r = await fetch(`/api/wallets/?status=${this.walletStatusFilter}`).catch(() => null);
-          if (r && r.ok) this.wallets = await r.json();
-        },
-
-        async loadPositions() {
-          const r = await fetch('/api/positions/open').catch(() => null);
-          if (r && r.ok) this.openPositions = await r.json();
-        },
-
-        async loadSignals() {
-          const r = await fetch('/api/signals/recent?limit=50').catch(() => null);
-          if (r && r.ok) this.recentSignals = await r.json();
-        },
-
-        async loadFunnel() {
-          const [cr, sr] = await Promise.all([
-            fetch('/api/funnel/counts').catch(() => null),
-            fetch('/api/funnel/shadow').catch(() => null),
-          ]);
-          if (cr && cr.ok) this.funnelCounts = await cr.json();
-          if (sr && sr.ok) this.shadowWallets = await sr.json();
-        },
-
-        async loadConfig() {
-          const r = await fetch('/api/config/').catch(() => null);
-          if (r && r.ok) {
-            this.botConfig = await r.json();
-            if (this.botConfig.trading_mode) this.mode = this.botConfig.trading_mode;
-          }
-        },
-
-        connectWS() {
-          const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-          const ws = new WebSocket(`${protocol}://${location.host}/ws`);
-          ws.onopen = () => {
-            this.wsConnected = true;
-            setInterval(() => ws.readyState === 1 && ws.send('ping'), 30000);
-          };
-          ws.onclose = () => {
-            this.wsConnected = false;
-            setTimeout(() => this.connectWS(), 3000);
-          };
-          ws.onmessage = (e) => {
-            try {
-              const msg = JSON.parse(e.data);
-              if (msg === 'pong') return;
-              this.handleWsEvent(msg);
-            } catch {}
-          };
-        },
-
-        handleWsEvent(msg) {
-          const ts = new Date(msg.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          if (msg.type === 'signal.detected') {
-            this.signalFeed.unshift({ ts, text: `${msg.data.wallet_address?.slice(0,8)} · ${msg.data.side} · ${msg.data.market_id?.slice(0,22)}`, ok: false });
-          } else if (msg.type === 'position.opened') {
-            this.signalFeed.unshift({ ts, text: `FILLED  ${msg.data.market_id?.slice(0,24)}`, ok: true });
-            this.loadPositions();
-          } else if (msg.type === 'position.closed') {
-            this.loadPositions();
-          } else if (msg.type === 'wallet.promoted') {
-            this.loadActiveWallets();
-          }
-          if (this.signalFeed.length > 60) this.signalFeed = this.signalFeed.slice(0, 60);
-        },
-
-        async triggerFunnel() {
-          await fetch('/api/funnel/run', { method: 'POST' });
-          this.actionMsg = 'Funnel re-run triggered';
-          setTimeout(() => { this.actionMsg = ''; this.loadFunnel(); }, 3000);
-        },
-
-        async testWebhook() {
-          await fetch('/api/config/webhook-test', { method: 'POST' });
-          this.actionMsg = 'Webhook test sent!';
-          setTimeout(() => this.actionMsg = '', 3000);
-        },
+    _startClock() {
+      const tick = () => {
+        this.clock = new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
       };
-    }
-  </script>
+      tick();
+      setInterval(tick, 1000);
+    },
 
-  <!-- Responsive tweaks -->
-  <style>
-    @media (max-width: 1100px) {
-      .kpi-grid  { grid-template-columns: repeat(2,1fr) !important; }
-      .chart-grid { grid-template-columns: 1fr !important; }
-      .pos-grid  { grid-template-columns: 1fr !important; }
-    }
-    @media (max-width: 640px) {
-      .kpi-grid { grid-template-columns: 1fr !important; }
-    }
-  </style>
+    async loadAll() {
+      await Promise.all([
+        this.loadEquity(), this.loadMetrics(), this.loadActiveWallets(),
+        this.loadPositions(), this.loadShadowPositions(), this.loadSignals(),
+        this.loadFunnel(), this.loadConfig(), this.pingHealth(),
+      ]);
+      this.lastUpdate = new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      this._updateTicker();
+      this.$nextTick(() => this.loadChart(this.eqWin));
+    },
+
+    async pingHealth() {
+      const r = await fetch('/health').catch(() => null);
+      this.health.api = (r && r.ok) ? 'ok' : 'err';
+      this.health.db = (r && r.ok) ? 'ok' : 'err';
+    },
+
+    async loadEquity() {
+      const r = await fetch('/api/equity/latest').catch(() => null);
+      if (r && r.ok) {
+        this.equity = await r.json();
+        this._animateKPI('kpi-eq',  this._prev.eq  || 0, this.equity.total_equity  || 0, v => '$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}));
+        this._animateKPI('kpi-dpnl',this._prev.dpnl || 0, this.equity.daily_pnl    || 0, v => (v>=0?'+':'')+' $'+Math.abs(v).toFixed(2));
+        this._animateKPI('kpi-cash',this._prev.cash || 0, this.equity.cash_balance  || 0, v => '$'+v.toFixed(0));
+        this._prev.eq   = this.equity.total_equity  || 0;
+        this._prev.dpnl = this.equity.daily_pnl     || 0;
+        this._prev.cash = this.equity.cash_balance  || 0;
+      }
+    },
+
+    _animateKPI(id, from, to, fmt, duration=600) {
+      if (from === to) return;
+      const el = document.getElementById(id);
+      if (!el) return;
+      const start = performance.now();
+      const update = (now) => {
+        const t = Math.min((now - start) / duration, 1);
+        const ease = 1 - Math.pow(1 - t, 3);
+        el.textContent = fmt(from + (to - from) * ease);
+        if (t < 1) requestAnimationFrame(update);
+      };
+      requestAnimationFrame(update);
+    },
+
+    async loadMetrics() {
+      const r = await fetch('/metrics').catch(() => null);
+      if (r && r.ok) this.metrics = await r.json();
+    },
+
+    async loadActiveWallets() {
+      const r = await fetch('/api/wallets/?status=active').catch(() => null);
+      if (r && r.ok) this.activeWallets = await r.json();
+    },
+
+    async loadWallets() {
+      const r = await fetch(`/api/wallets/?status=${this.walletFilter}`).catch(() => null);
+      if (r && r.ok) this.wallets = await r.json();
+    },
+
+    async loadPositions() {
+      const r = await fetch('/api/positions/open').catch(() => null);
+      if (r && r.ok) this.openPositions = await r.json();
+    },
+
+    async loadShadowPositions() {
+      const r = await fetch('/api/positions/open/shadow').catch(() => null);
+      if (r && r.ok) this.shadowPositions = await r.json();
+    },
+
+    async loadSignals() {
+      const r = await fetch('/api/signals/recent?limit=60').catch(() => null);
+      if (r && r.ok) this.recentSignals = await r.json();
+    },
+
+    async loadFunnel() {
+      const [cr, sr] = await Promise.all([
+        fetch('/api/funnel/counts').catch(() => null),
+        fetch('/api/funnel/shadow').catch(() => null),
+      ]);
+      if (cr && cr.ok) this.funnelCounts = await cr.json();
+      if (sr && sr.ok) this.shadowWallets = await sr.json();
+    },
+
+    async loadConfig() {
+      const r = await fetch('/api/config/').catch(() => null);
+      if (r && r.ok) {
+        this.botConfig = await r.json();
+        if (this.botConfig.trading_mode) this.mode = this.botConfig.trading_mode;
+      }
+    },
+
+    _updateTicker() {
+      const eq = this.equity;
+      const sets = [
+        ['tk-eq',   '$'+(eq.total_equity||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})],
+        ['tk-dpnl', ((eq.daily_pnl||0)>=0?'+':'')+' $'+(eq.daily_pnl||0).toFixed(2)],
+        ['tk-apnl', ((eq.all_time_pnl||0)>=0?'+':'')+' $'+(eq.all_time_pnl||0).toFixed(2)],
+        ['tk-pos',  String(this.openPositions.length)],
+        ['tk-wl',   String(this.activeWallets.length)],
+        ['tk-sh',   String(this.shadowWallets.length)],
+        ['tk-q',    String((this.metrics.queue_live||0)+(this.metrics.queue_shadow||0))],
+        ['tk-mode', this.mode],
+      ];
+      sets.forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        const el2 = document.getElementById(id+'2');
+        if (el) {
+          el.textContent = val;
+          const pnlIds = ['tk-dpnl','tk-apnl'];
+          if (pnlIds.includes(id)) el.style.color = val.startsWith('+') ? 'var(--green)' : (val.startsWith('-') ? 'var(--red)' : 'var(--text)');
+        }
+        if (el2) { el2.textContent = val; if (['tk-dpnl2','tk-apnl2'].includes(id+'2')) el2.style.color = val.startsWith('+') ? 'var(--green)' : (val.startsWith('-') ? 'var(--red)' : 'var(--text)'); }
+      });
+    },
+
+    async loadChart(win = '7d') {
+      this.eqWin = win;
+      const r = await fetch(`/api/equity/history?window=${win}`).catch(() => null);
+      if (!r || !r.ok) return;
+      const data = await r.json();
+      if (!data.length) return;
+      const x = data.map(d => d.ts);
+      const y = data.map(d => d.total_equity);
+      const isPos = y[y.length-1] >= y[0];
+      const color = isPos ? '#00e87a' : '#ff3355';
+      Plotly.react('equity-chart', [{
+        x, y, type:'scatter', mode:'lines',
+        line:{ color, width:1.5 },
+        fill:'tozeroy', fillcolor: isPos ? 'rgba(0,232,122,0.04)' : 'rgba(255,51,85,0.04)',
+        hovertemplate:'<b>%{y:$,.2f}</b><extra></extra>',
+      }], {
+        margin:{ t:4, b:26, l:54, r:8 },
+        paper_bgcolor:'transparent', plot_bgcolor:'transparent',
+        xaxis:{ color:'#2d3748', gridcolor:'rgba(255,255,255,0.025)', zeroline:false, tickfont:{size:10} },
+        yaxis:{ color:'#2d3748', gridcolor:'rgba(255,255,255,0.025)', zeroline:false, tickfont:{size:10}, tickprefix:'$' },
+        font:{ color:'#4a5568', size:10, family:'JetBrains Mono' },
+        hoverlabel:{ bgcolor:'#0d1520', bordercolor:'rgba(255,255,255,0.1)', font:{color:'#e8f0fe',size:11} },
+      }, { displayModeBar:false, responsive:true });
+    },
+
+    // ── WebSocket ────────────────────────────────
+    connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws.onopen = () => {
+        this.wsConn = true;
+        setInterval(() => ws.readyState === 1 && ws.send('ping'), 25000);
+      };
+      ws.onclose = () => { this.wsConn = false; setTimeout(() => this.connectWS(), 3000); };
+      ws.onerror = () => { this.wsConn = false; };
+      ws.onmessage = (e) => {
+        try { const m = JSON.parse(e.data); if (m !== 'pong') this._handleWS(m); } catch {}
+      };
+    },
+
+    _handleWS(msg) {
+      const ts = new Date(msg.ts).toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      const d = msg.data || {};
+
+      if (msg.type === 'signal.detected') {
+        this._logEvent(ts, 'SIGNAL', 'var(--cyan)', `${(d.wallet_address||'').slice(0,10)} · ${d.side||''} · ${(d.market_id||'').slice(0,24)}`);
+      } else if (msg.type === 'position.opened') {
+        this._logEvent(ts, 'FILLED', 'var(--green)', `${d.side||''} ${(d.market_id||'').slice(0,28)}`);
+        this.toast('fill', '↗ Position Opened', `${d.side} on ${(d.market_id||'').slice(0,30)}`);
+        this.loadPositions();
+      } else if (msg.type === 'position.closed') {
+        const pnl = d.realized_pnl_usd;
+        const pnlStr = pnl != null ? ` · P&L: ${pnl>=0?'+':''}$${pnl.toFixed(2)}` : '';
+        this._logEvent(ts, 'CLOSED', pnl>=0?'var(--green)':'var(--red)', `${(d.market_id||'').slice(0,28)}${pnlStr}`);
+        this.toast(pnl>=0?'fill':'warn', 'Position Closed', `${pnlStr}`);
+        this.loadPositions();
+      } else if (msg.type === 'wallet.promoted') {
+        this._logEvent(ts, 'PROMOTED', 'var(--amber)', `${(d.address||'').slice(0,14)} → ACTIVE`);
+        this.toast('signal', '⬆ Wallet Promoted', `${(d.address||'').slice(0,16)} is now active`);
+        this.loadActiveWallets();
+      } else if (msg.type === 'circuit_breaker.tripped') {
+        this._logEvent(ts, 'BREAKER', 'var(--red)', d.reason||'Circuit breaker tripped');
+        this.toast('err', '⚠ Circuit Breaker', d.reason||'Trading halted');
+      }
+    },
+
+    _logEvent(ts, type, color, msg) {
+      this.events.unshift({ ts, type, color, msg });
+      if (this.events.length > 80) this.events = this.events.slice(0, 80);
+    },
+
+    // ── Toasts ───────────────────────────────────
+    toast(type, title, msg) {
+      const icons = { fill:'↗', signal:'◉', warn:'!', err:'✕' };
+      const id = ++this.toastIdCounter;
+      this.toasts.push({ id, type, title, msg, icon:icons[type]||'●' });
+      setTimeout(() => this.dismissToast(id), 5000);
+    },
+    dismissToast(id) { this.toasts = this.toasts.filter(t => t.id !== id); },
+
+    // ── Actions ──────────────────────────────────
+    async runFunnel() {
+      await fetch('/api/funnel/run', { method:'POST' });
+      this._logEvent(this.clock, 'FUNNEL', 'var(--amber)', 'Manual re-run triggered');
+      this.toast('signal', 'Funnel Re-run', 'Pipeline started manually');
+      setTimeout(() => this.loadFunnel(), 5000);
+    },
+    async testWebhook() {
+      await fetch('/api/config/webhook-test', { method:'POST' });
+      this.actionMsg = 'Webhook test sent!';
+      setTimeout(() => this.actionMsg = '', 3000);
+    },
+  };
+}
+</script>
+
 </body>
 </html>
