@@ -1,0 +1,855 @@
+# Polymarket Copy-Trading Bot — Comprehensive Technical Planning Document
+
+**Version:** 1.0 · **Date:** May 24, 2026 · **Status:** Pre-build planning, paper-first
+
+---
+
+## TL;DR
+
+- **Build a Python (`py-clob-client-v2`) + SQLite + FastAPI + Next.js/shadcn/Lightweight-Charts local stack** that copies 20–50 daily-re-ranked Polymarket wallets via a hybrid Data-API-polling + Alchemy-Polygon-log-subscription detection layer, executes through FOK orders sized at $5 base (rank-multiplied $3.50–$7.50, floor $5) to clear the typical per-market `min_order_size` of 5 shares, and uses a single execution function whose only branch on `Mode.PAPER` vs `Mode.LIVE` is whether fills are written by a pessimistic in-memory simulator or by the live CLOB V2 client.
+- **Treat paper as live.** All upstream logic — leader ingest, ranking, sizing, aggregation, conflict resolution, exits, capacity caps, kill-switch — is mode-agnostic; live mode is locked in the dashboard until paper validation criteria (14 consecutive days, ≥ 400 trades, > +3% net of simulated slippage, ≤ 8% max daily drawdown, zero ghost trades, zero unrecovered crashes) all hold within the last 14 days.
+- **Free APIs are sufficient for everything.** Polymarket's CLOB, Gamma, and Data APIs are public (rates measured in thousands/10s); five Goldsky-hosted subgraphs and Alchemy's free Polygon tier (30M CU/month) cover discovery, ranking and chain-level audit; Dune Analytics' free tier (2,500 credits/month) provides cross-validation; no paid tier of any service is required for a $500-bankroll local bot.
+
+---
+
+## Key Findings
+
+1. **Polymarket migrated to CLOB V2 on April 28, 2026** — new exchange contracts, new collateral token (pUSD), and a fully deprecated V1 SDK; the bot MUST use `py-clob-client-v2` and the V2 endpoints.
+2. **The CLOB user-channel websocket cannot subscribe to other users' wallets** — confirmed in Polymarket's documentation. Real-time copy-trading therefore needs a hybrid of (a) Data-API `/trades` polling per leader and (b) Polygon log subscription via Alchemy on the V2 Exchange contract, with Goldsky subgraphs as a reconciliation layer.
+3. **The CLOB minimum order size is a per-market field** typically `"5"` (5 shares for limit orders); market orders are constrained at $1 USDC minimum notional. This is the single hardest sizing constraint on a $500 bankroll and is why fixed-dollar sizing (≥ $5/trade) beats proportional-to-leader sizing.
+4. **Wash trading is structurally large on Polymarket** — a peer-reviewable study by Columbia and Barnard researchers (Kanoria, Ma, Sethi, Sirolly; SSRN, Nov 2025) found artificial trading averaged 25% of all buying and selling on Polymarket over the prior three years. The discovery layer must therefore include explicit anti-wash/cluster filters; uncritical leaderboard scraping is not safe.
+5. **The Polymarket international platform reopened to US users in February 2026** (with state-level carve-outs); the bot does not need to bypass geofencing, but the user must confirm their jurisdiction's status before going live.
+6. **The dashboard stack is decided:** Next.js 15 App Router + shadcn/ui + TradingView Lightweight Charts v5 (Apache-2.0, current version 5.2.0). This is the modern dark-trader-terminal pattern (see the `coinpulse` reference build using Next.js 16 + shadcn + Lightweight Charts) and avoids the licensing complexity of TradingView's proprietary Charting Library.
+7. **OS-keychain-encrypted secrets, not plain `.env`.** The bot's EOA controls a Safe proxy holding real USDC; loss-of-key is total-loss. The default install reads private key + L2 credentials from the OS keychain via Python's `keyring`; the `.env` carries only references.
+
+---
+
+## Details
+
+### 1. Polymarket platform — state of play as of May 2026
+
+#### 1.1 Architecture
+
+Polymarket is a hybrid-decentralized CLOB on **Polygon PoS (chain ID 137)**. Off-chain matching, on-chain settlement via EIP-712 signed orders against the Exchange smart contract. There is no AMM in the user-facing trading flow today; the legacy FPMM contracts persist for on-chain conversions, splits, and merges, but routine trading is CLOB-only.
+
+**April 28, 2026 CLOB V2 cutover (the dominant fact for this build):**
+
+* Collateral migrated from **USDC.e (bridged) to pUSD (Polymarket USD)** — a Polygon ERC-20 backed 1:1 by Circle USDC, with backing enforced on-chain by the Collateral Onramp contract. The user-visible balance is still labeled USDC; pUSD is wire-level only.
+* The Exchange contract was replaced with **CTF Exchange V2** (audited by Cantina and Quantstamp).
+* The EIP-712 domain version bumped to `"2"` and the `verifyingContract` is the V2 Exchange.
+* **The v1 py-clob-client and v1 TypeScript clob-client no longer work against production.** The v1 PyPI README explicitly directs: *"Please migrate to the V2 client: https://github.com/Polymarket/py-clob-client-v2."*
+* All V1 resting orders were wiped during the ~1-hour maintenance window.
+* Fees are now charged in pUSD at match time, not in shares at placement.
+
+**Other 2025–2026 changes that matter for a bot:**
+
+* In late April 2026, Polymarket's VP of Engineering DeFi publicly confirmed "chain migration" off Polygon as a roadmap priority; no target chain or date has been set. Build chain identifiers, RPC URLs, and contract addresses as configuration, not constants.
+* On Oct 7, 2025, ICE announced a $2B strategic investment; per the official ICE press release, this was at "a valuation of approximately $8 billion pre-investment," and Polymarket CEO Shayne Coplan posted on X the same day that the investment was "valuing us at $9 billion post-money."
+* The Polymarket international platform reopened to US users in February 2026; the 2022 CFTC geo-block was lifted. Separate Polymarket US (operated by QCX LLC) runs as the CFTC-regulated entity.
+* HeartBeats API and post-only orders launched January 2026 for market-maker resilience.
+
+#### 1.2 The three APIs
+
+| API | Base URL | Purpose | Auth |
+|---|---|---|---|
+| **CLOB API** | `https://clob.polymarket.com` | Order book + trading + order management | Public reads; L1 (EIP-712) to mint API creds; L2 (HMAC) for trading |
+| **Gamma API** | `https://gamma-api.polymarket.com` | Market/event metadata, tags, slugs, sports, search | Public |
+| **Data API** | `https://data-api.polymarket.com` | Positions, trades, activity, holders, value, leaderboard | Public |
+| **CLOB WebSocket** | `wss://ws-subscriptions-clob.polymarket.com/ws/{market\|user}` | Real-time market and user channels | Public market; L2 user |
+
+#### 1.3 CLOB authentication
+
+* **L1 (private key, EIP-712).** Sign the `ClobAuth` struct (`domain.name="ClobAuthDomain"`, `version="1"`, `chainId=137`, message `"This message attests that I control the given wallet"`). Needed only to mint or derive L2 credentials.
+* **L2 (apiKey + secret + passphrase, HMAC-SHA256).** Generate once via `client.create_or_derive_api_key()`; every trading request carries `POLY_ADDRESS`, `POLY_SIGNATURE`, `POLY_TIMESTAMP`, `POLY_API_KEY`, `POLY_PASSPHRASE` headers.
+
+#### 1.4 Order types and microstructure (CLOB V2)
+
+* **GTC** (good-till-cancel, resting limit), **GTD** (good-till-date), **FOK** (fill-or-kill — full immediate fill or cancel), **FAK** (fill-and-kill — partial immediate fill, remainder cancelled; replaced what older docs called IOC).
+* **Tick sizes** per market: one of `0.1, 0.01, 0.001, 0.0001`. Default $0.01; tightens to $0.001 when an outcome price moves above $0.96 or below $0.04. The bot must read `tick_size` per market and subscribe to the `tick_size_change` WS event — non-conforming orders are rejected.
+* **Minimum order size:** per-market field `min_order_size` (typical `"5"` for limit orders); market orders require ≥ $1 USDC notional.
+* **Maker fee schedule** is currently 0 bps; market orders pay taker fees per market-specific schedules.
+
+#### 1.5 Rate limits (Cloudflare-throttled, queued not rejected)
+
+| Endpoint family | Burst (10s) | Sustained (10 min) |
+|---|---|---|
+| General REST | 15,000 | — |
+| CLOB general | 9,000 | — |
+| CLOB market data (`/book`, `/price`, `/midprice`) single | 1,500 | — |
+| CLOB market data batch | 500 | — |
+| POST `/order` | 3,500 | 36,000 (~60/s) |
+| DELETE `/order` | 3,000 | 30,000 |
+| POST `/orders` (batch ≤15) | 1,000 | 15,000 |
+| Gamma API general | 4,000 | — |
+| Gamma `/events` | 500 | — |
+| Gamma `/markets` | 300 | — |
+| Gamma `/search` | 350 | — |
+| Data API general | 1,000 | — |
+| Data API `/trades` | 200 | — |
+| Data API `/positions` | 150 | — |
+
+A 50-leader copy bot is multiple orders of magnitude under every limit.
+
+#### 1.6 WebSocket channels
+
+* **`wss://ws-subscriptions-clob.polymarket.com/ws/market`** — public; subscribe by `assets_ids` (token IDs). Emits `book`, `price_change`, `tick_size_change`, `last_trade_price`. With `custom_feature_enabled: true`: also `best_bid_ask`, `new_market`, `market_resolved`. Server sends ping every 5s; client must reply pong within 10s. Soft cap of approximately 5 concurrent WS connections per IP.
+* **`wss://ws-subscriptions-clob.polymarket.com/ws/user`** — L2-authenticated; subscribe by `markets` (condition IDs). Emits `trade` and `order` events for **your own** account only. It does NOT report other users' trades — a critical architectural constraint: leader detection must use the market channel or Polygon logs, not the user channel.
+
+#### 1.7 Data API — endpoints used by the bot
+
+All public, no auth. Base `https://data-api.polymarket.com`. Accepts both EOA and proxy addresses in `user`; responses always return `proxyWallet`.
+
+* **`GET /positions?user=<addr>`** — paginated; `limit` default 100, max 500; `sortBy ∈ {TOKENS, CURRENT, INITIAL, CASHPNL, PERCENTPNL, TITLE, RESOLVING, PRICE}`; filters `market` (conditionId CSV), `sizeThreshold`, `redeemable`, `mergeable`, `title`.
+* **`GET /trades?user=<addr>`** — paginated DESC; filters `market`, `side`, `takerOnly` (default true), `filterType` (CASH|TOKENS), `filterAmount`.
+* **`GET /activity?user=<addr>`** — TRADE / SPLIT / MERGE / REDEEM / REWARD / CONVERSION events with `start`/`end` unix-seconds windows.
+* **`GET /holders?market=<conditionId>`** — top holders.
+* **`GET /value?user=<addr>`** — total USD value of open positions.
+* **`GET /v1/leaderboard`** — official leaderboard. Params: `category` (OVERALL, POLITICS, SPORTS, CRYPTO, CULTURE, MENTIONS, WEATHER, ECONOMICS, TECH, FINANCE), `timePeriod` (DAY, WEEK, MONTH, ALL), `orderBy` (PNL, VOL), `limit` (default 25, max 50), `offset` (max 1000). Returns `[{rank, proxyWallet, userName, vol, pnl, profileImage, xUsername, verifiedBadge}]`. This is the seed for daily wallet discovery.
+
+#### 1.8 Goldsky subgraphs (public, no auth, GraphQL POST)
+
+Base: `https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/<name>/<version>/gn`.
+
+| Subgraph | Path | Use in bot |
+|---|---|---|
+| Positions | `positions-subgraph/0.0.7/gn` | Cross-check Data API, time series |
+| Orderbook / Orders | `orderbook-subgraph/0.0.1/gn` | Historical fills, last-trade-price |
+| Activity | `activity-subgraph/0.0.4/gn` | Splits/merges/redemptions audit |
+| Open Interest | `oi-subgraph/0.0.6/gn` | Liquidity gating |
+| PnL | `pnl-subgraph/0.0.14/gn` | Authoritative realized PnL for ranking |
+
+The Graph also hosts a combined subgraph at `gateway.thegraph.com/api/<key>/subgraphs/id/Bx1W4S7kDVxs9gC3s2G6DS8kdNBJNVhMviCtin2DiBp` (100k queries/month free with a Graph API key) as a backup if Goldsky has an outage.
+
+#### 1.9 The proxy-wallet / funder model — critical
+
+Polymarket positions and pUSD balances never live on the EOA. Every Polymarket user has a proxy wallet:
+
+* **Magic-link (email) users** → CREATE2-derived **EIP-1167 minimal proxy** (signature type **1**).
+* **Browser / MetaMask / external-EOA users** → **modified Gnosis Safe (1-of-1 multisig)** (signature type **2**).
+* **Pure EOA-signed trading** (deposit wallets, API-only setups) → signature type **0**.
+
+All ERC-1155 outcome tokens and pUSD balances live on the **proxy address** (the `funder`), not the EOA. APIs report trades against `proxyWallet`. Proxy factory address: `0x56C79347e95530c01A2FC76E732f9566dA16E113`.
+
+**Copy-trading implications:**
+1. The "leader wallet" you track is the **proxy address** (the 0x address on the leaderboard, profile URL, and `proxyWallet` field). Do not follow their EOA — it will appear inactive.
+2. The bot's own trades emit under *its* proxy address; the `funder` parameter you pass to `py-clob-client-v2` is your proxy.
+3. To recover the canonical proxy from an EOA, use the deterministic CREATE2 derivation; `py-clob-client-v2` and `rs-clob-client` ship helpers (`derive_safe_wallet`, `derive_proxy_wallet`).
+
+#### 1.10 Wallet setup for the bot (decisive)
+
+**Use a fresh dedicated EOA + Gnosis Safe proxy (signature type 2).**
+
+1. Generate a new EOA locally (`eth_account.Account.create()`); store the private key only in the OS keychain (see §10), not in plain `.env`.
+2. Send ~$3 of POL to the EOA for gas insurance (allowance-setting, manual wrapping, withdrawals).
+3. Deploy the Safe proxy by the first interaction with Polymarket, or proactively via the Safe factory.
+4. Bridge / deposit USDC on Polygon to the **Safe proxy address** (NOT the EOA). First trade auto-wraps USDC → pUSD via the Collateral Onramp.
+5. Run a one-shot `set_allowances.py` (adapted from NautilusTrader's adapter or the official `agent-skills` repo) to grant max allowance to Exchange V2 and CTF on pUSD and the 1155 tokens.
+6. Call `client.create_or_derive_api_key()` once; store `{apiKey, secret, passphrase}` in the OS keychain.
+
+Per-trade gas cost is essentially zero in USDC terms because Polymarket's Builder Relayer gas-stations CLOB matches; POL is held only as insurance for direct contract calls.
+
+#### 1.11 Geographic restrictions — honest note
+
+The international platform is open to US users again as of February 2026; the 2022 CFTC block was lifted. It remains blocked in OFAC-sanctioned jurisdictions (Iran, North Korea, Cuba, Russia, Syria) and a growing list of others including France, Belgium, Singapore, Portugal, Hungary, Argentina, and the UK (gambling-licensing actions). A separate **Polymarket US** entity runs as the CFTC-regulated platform. The bot does not bypass geofencing; verify your specific jurisdiction and contract type before going live, and respect ToS.
+
+---
+
+### 2. Wallet discovery & ranking
+
+#### 2.1 Objective
+
+Maintain a daily-refreshed roster of 20–50 "fast" wallets — high trade frequency, short hold times, small/medium per-trade sizes — re-computed every day at 04:00 UTC and persisted with full diff history.
+
+#### 2.2 Sources, ranked
+
+1. **Data API `/v1/leaderboard`** — primary seed. Pull DAY, WEEK, MONTH × OVERALL/POLITICS/SPORTS/CRYPTO. With `limit=50, offset=0,50,…,500`, ~500 wallets/category/window. ~30 requests/day.
+2. **Goldsky `pnl-subgraph`** — authoritative 30-day realized PnL ranking.
+3. **Goldsky `orderbook-subgraph` + `activity-subgraph`** — trade counts, hold times, market diversity.
+4. **Data API `/trades` + `/positions` per candidate** — drill-down.
+5. **Data API `/value`** — current open-positions $ for the size band filter.
+6. **Public Dune dashboards (free tier, 2,500 credits/month; pay-as-you-go at $5.00 per 100 additional credits beyond the bucket; ~500 query executions/month free)** — cross-validation:
+   * `dune.com/rchen8/polymarket`
+   * `dune.com/filarm/polymarket-activity`
+   * `dune.com/datadashboards/polymarket-overview`
+   * `dune.com/defioasis/polymarket-pnl`
+   * `dune.com/genejp999/polymarket-leaderboard`
+   * `dune.com/lujanodera/polymarket-analysis`
+7. **Third-party analytics (cross-check only):** `polymarketanalytics.com/traders`, `polymarketrankings.com`, `polycopy.app`, `stand.trade`, `polytrackhq.app`, `merlin.trade/leaderboard`. All scrape the Polymarket APIs.
+8. **Alchemy Polygon free RPC** — direct chain queries for ground-truth and cluster detection.
+9. **Ankr + public `polygon-rpc.com`** — failover RPCs.
+
+#### 2.3 Discovery funnel (daily)
+
+```
+Step 1 — Seed (Data API + Goldsky pnl-subgraph):
+    Top 500 wallets by 7-day PNL (Data API leaderboard)
+    Top 500 wallets by 30-day PNL (Goldsky pnl-subgraph)
+    Top 200 by VOL on each of DAY/WEEK/MONTH (Data API)
+    Union ≈ 1,200-1,500 candidate proxy addresses.
+
+Step 2 — Hard filters (drop immediately):
+    - 30d trade count < 30           → statistical noise
+    - 30d trade count > 5,000        → likely MM bot, not "fast directional"
+    - Current /value > $250,000      → too large; your $5 copies are noise; their fills move price
+    - Current /value < $1,000        → too small / dust-farmer
+    - First-trade timestamp < 21d ago → insufficient history
+    - Wash-trading score > 0.3       → drop (see §2.5)
+    - Cluster sibling already in roster → drop dupes (see §2.5)
+
+Step 3 — Score remaining ≈ 200 candidates (see §2.4).
+
+Step 4 — Top 50 by score: top 30 "active", 31-50 "standby".
+```
+
+#### 2.4 Ranking score — exact formula
+
+For each wallet over a 30-day rolling window:
+
+```
+trades_30d        = taker trades from /trades
+trade_freq        = trades_30d / 30
+median_hold_hours = median(close_ts - open_ts) per closed position
+win_rate          = closed_winners / closed_trades
+realized_pnl_30d  = sum realized PnL on closed trades (pnl-subgraph)
+avg_position_usd  = mean(initialValue) of opens in window
+per_trade_pnl     = realized_pnl_30d / closed_trades_30d
+per_trade_pnl_std = stddev of per-trade realized PnL
+sharpe_like       = per_trade_pnl / per_trade_pnl_std       (clip to [-3, 3])
+market_diversity  = unique conditionIds / trades_30d         (clip to [0, 1])
+recent_7d_pnl     = realized PnL over last 7 days
+```
+
+Percentile-normalize each within the candidate pool, then:
+
+```
+score = 0.25 * pct(trade_freq)              # FAST = trade often
+      + 0.20 * pct(sharpe_like)             # consistent per-trade edge
+      + 0.15 * pct(win_rate)
+      + 0.15 * pct(recent_7d_pnl)           # recent form
+      + 0.10 * (1 - pct(median_hold_hours)) # SHORT holds preferred
+      + 0.10 * pct(market_diversity)        # not a one-market specialist
+      + 0.05 * pct(realized_pnl_30d)        # de-emphasized at small bankroll
+```
+
+Tie-breaks: higher `trades_30d`, then later `last_trade_ts`. Top 30 = active, 31–50 = standby.
+
+#### 2.5 Survivorship-bias and anti-gaming guardrails
+
+* Minimum 30 closed trades, minimum 21-day account age, positive realized 30d PnL, max 35% 30d drawdown, multiplicative 0.5× penalty when `last_trade_ts > 48h`.
+* **Wash-trading score (drop if > 0.3)** is a weighted sum of:
+  1. Counterparty concentration (HHI > 0.4 in any 24h window over `/activity` + `orderFilledEvent`s) → +0.5.
+  2. Round-trip clustering: buy-then-sell of `(conditionId, outcomeIndex)` within ≤10 min netting near-zero share-balance change; > 15% of trades → +0.3.
+  3. Extreme-price trades (price < $0.01 or > $0.99) > 20% of trades → +0.4.
+  4. Volume/PnL imbalance: `|realized_pnl_30d| / total_volume_30d < 0.001` at volume > $50k → +0.4.
+* **Cluster detection by funding-source analysis.** For each candidate's controlling EOA (resolved by reading the Safe singleton's owner via Polygon RPC), trace USDC funding hops via `eth_getLogs`. Edge: "EOA A funded EOA B with ≥ $100 USDC within 7 days of B's first trade." In any weakly-connected component, keep only the highest-scoring wallet.
+
+These guardrails are not theoretical: the Columbia / Barnard paper *"Network-Based Detection of Wash Trading"* (SSRN, Nov. 6, 2025) by Yash Kanoria and Hongyao Ma (Columbia Business School), Rajiv Sethi (Barnard College), and doctoral student Allen Sirolly states that "the 'artificial trading'…accounted for an average of 25% of all buying and selling on Polymarket over the past three years." Treat naive leaderboard scraping as poisoned.
+
+#### 2.6 Cold-wallet rule (intra-day)
+
+Pause copying from a wallet (without removing from the roster):
+* Last detected trade > 24 h ago.
+* 7-day rolling realized PnL turns negative AND drawdown > 15% from 30d peak.
+* Three consecutive copied trades from this leader closed at a loss in last 48 h.
+
+Resume automatically when conditions reverse.
+
+---
+
+### 3. Copy execution engine
+
+#### 3.1 Detection — hybrid
+
+Because the CLOB user WebSocket cannot subscribe to *other users'* wallets, the bot uses:
+
+* **(a) Polygon log subscription via Alchemy `eth_subscribe("logs", …)`** on the V2 Exchange contract's `OrderFilled` / `OrdersMatched` events, filtered for active leader proxy addresses in `maker`/`taker`. Polygon block propagation is ~2s; the event reaches the bot within ~50–200 ms of inclusion. Alchemy's free tier covers a continuous Polygon log subscription comfortably.
+* **(b) Polling `data-api.polymarket.com/trades?user=<wallet>&limit=20` per leader on a 3 s stagger.** Data API picks up matches ~500 ms after off-chain match — *before* chain settlement. **Primary signal path.** Thirty leaders × every 3 s = 10 req/s, well under the 200/10s `/trades` limit.
+* **(c) Goldsky `orderbook-subgraph` polling at 10 s** as a reconciliation/audit layer, ~5–30 s lagged.
+
+**Latency budget (leader fill → bot order submitted):**
+
+| Stage | Typical | Worst case |
+|---|---|---|
+| Leader fill matched off-chain | t = 0 | t = 0 |
+| Data API `/trades` updated | +300 ms | +900 ms |
+| Bot poll picks up new trade | +1,500 ms (3 s poll avg) | +3,000 ms |
+| Decision logic (dedup, sizing, risk) | +20 ms | +100 ms |
+| Order signing (EIP-712) | +30 ms | +80 ms |
+| POST `/order` to CLOB | +150 ms | +600 ms |
+| **End-to-end** | **~2 s** | **~4.7 s** |
+
+When the log-subscription path (a) fires first (often once the chain settlement is included), end-to-end can be ~600–800 ms. **Two seconds is the realistic target.** Sub-second is the aspiration.
+
+#### 3.2 Sizing — decisive
+
+**Fixed-dollar with leader-rank multiplier**, NOT proportional-to-leader-bankroll. A leader's bankroll cannot be reliably estimated, and copying their *percentage* on $500 produces $0.50 trades that violate the per-market `min_order_size` of 5 shares.
+
+```
+PER_TRADE_BASE_USD   = 5.00
+SIZE_RANK_MULTIPLIER = {
+   ranks 1-10  : 1.50  ($7.50)
+   ranks 11-20 : 1.00  ($5.00)
+   ranks 21-30 : 0.70  ($3.50, floor enforced below)
+}
+MIN_NOTIONAL_USD     = 5.00
+MAX_NOTIONAL_USD     = 10.00
+SLIPPAGE_BUFFER      = 0.02  # cap effective impact at 2% of leader's fill
+```
+
+Per copy: `size_usd = clip(PER_TRADE_BASE_USD * SIZE_RANK_MULTIPLIER[rank], MIN, MAX)`. Shares = `floor(size_usd / p_leader)`; reject if `shares < market.min_order_size`. Clamp price source to `min(p_leader, top_of_book_ask)` to handle the p ≥ $1 edge case.
+
+**Why this works on $500:** Max 25 concurrent positions (§3.7) × $5–$7 average = $125–$175 allocated, leaving 65 %+ free for new signals. Average copy is 5–10 shares, comfortably above the 5-share floor.
+
+#### 3.3 Aggregation: multiple leaders, same market
+
+When ≥ 2 leaders enter the **same (conditionId, outcomeIndex)** within a **120 s rolling window**:
+
+* The first signal opens the position at chosen size.
+* Each subsequent signal in the window from a *different* leader adds 50 % of base sizing, capped at `MAX_NOTIONAL_USD × 3 = $30` total exposure per market.
+* The position is tagged with all contributing leaders; PnL attribution is split proportionally.
+
+**Do not** open separate orders per leader for the same market — that triples slippage. Single `clientOrderId` per aggregated entry.
+
+#### 3.4 Routing — decisive
+
+**FOK market-style orders priced at `min(leader_fill_price + 2 ticks, top_of_book_ask)`.** Reasoning:
+
+* GTC limits at the leader's exact fill price are appealing (zero maker fee) but in fast markets frequently fail to fill before the edge decays — adverse selection is the dominant copy-trading risk.
+* FOK guarantees fill at predictable slippage or no trade.
+* Polymarket's maker fee schedule is currently 0 bps, so the financial incentive to be a maker is small.
+* Sells (exits): same FOK logic at `max(leader_exit_price - 2 ticks, top_of_book_bid)`.
+
+If FOK fails (book moved past +2 ticks during submission), do not retry — log and move on; the signal has decayed.
+
+#### 3.5 Exit logic
+
+Each position carries `{leader_proxies, market_id, outcome, entry_ts, entry_size, entry_price}`. Continuous triggers:
+
+1. **Leader-exit mirror.** Any contributing leader scales out ≥ 50 % of their position → bot sells the same fractional %. When aggregated leader exposure hits zero → fully close.
+2. **Time stop.** `now - entry_ts > 24 h` AND no leader has updated their position in 12+ h → close at market.
+3. **Market-resolution stop.** When `time_to_resolution < 6 h`, freeze sizing (no new opens), exit any existing position with unrealized PnL > +5 %. Resolution risk is unmodelable.
+4. **Hard PnL stops.** Per-position stop-loss at −40 % of notional; daily aggregate loss > 8 % of bankroll triggers kill-switch.
+
+#### 3.6 Conflict resolution: YES vs NO
+
+* No current position: take the **first** signal.
+* Already hold YES, new NO signal: ignore NO. The thesis is owned by the held position.
+* Both signals in the same 120 s window: take the **higher-scoring leader's** side. Log rejected signal with full reasoning.
+
+#### 3.7 Capacity limits ($500 bankroll)
+
+| Limit | Value | Rationale |
+|---|---|---|
+| Max concurrent open positions | 25 | Diversification floor, room for new signals |
+| Max exposure per single market | $30 (≈ 6 % bankroll) | One resolution failure capped at 6 % |
+| Max exposure per single leader (sole contributor) | $50 (10 %) | Concentration cap |
+| Max daily new openings | 40 trades | Spread/fee budget cap |
+| Daily loss kill-switch | −8 % ($40 from session start) | Stop the bleed, force review |
+| Per-position stop-loss | −40 % of notional | ~$2 max single-position loss |
+
+#### 3.8 Idempotency and crash recovery
+
+Every order carries a deterministic `clientOrderId = sha256(leader_proxy + market_id + outcome + leader_fill_tx_hash + bot_size_bucket)[:16]`. SQLite `attempted_orders` table is written **before** POST. On recovery:
+
+1. Load rows with `status IN ('pending', 'submitted')`.
+2. Query `client.get_order(server_order_id)` or `/trades?user=<my_proxy>&limit=…` filtered by token+price.
+3. Reconcile: matched on-chain → FILLED, populate positions; still open → keep tracking; timed out > 5 min → CANCELED.
+4. Re-arm signal processing only after reconciliation completes.
+
+A `kill -9` mid-trade cannot result in a double order.
+
+---
+
+### 4. Paper trading mode
+
+#### 4.1 Single code path
+
+```python
+def execute_order(intent: OrderIntent, mode: Mode):
+    # ... all upstream logic identical ...
+    if mode is Mode.LIVE:
+        return clob_client.create_and_post_order(...)
+    return paper_fill_engine.simulate(intent, current_book)
+```
+
+The mode is a single config flag; the dashboard shows it as a giant header badge (red PAPER / green LIVE).
+
+#### 4.2 Realistic simulator
+
+The simulator subscribes to the same `wss://…/ws/market` channel and maintains an in-memory L2 book per active market. On `simulate(intent)`:
+
+1. Snapshot the book at intent time.
+2. For a market BUY FOK with notional `N`, walk asks from best ask upward, consuming size until `N` is filled or book exhausts.
+3. **Pessimism:** apply +0.5-cent worst-side adjustment to the VWAP fill price (your real order would move the book by up to one tick), AND drop 25 % of visible size at each level (other takers + latency exist). Paper fills are slightly *worse* than reality — desirable conservatism.
+4. Simulated fees: 0 bps current; engine retains a `paper_fee_rate_bps` config for what-if testing.
+5. Write a `paper_fill` row with `(client_order_id, fill_price, fill_size, fees_usd, slippage_bps, book_snapshot_id)`.
+
+FOK that the simulator decides would fail (insufficient depth within +2 ticks) returns `status=REJECTED` and opens no position.
+
+#### 4.3 PnL, fees, slippage tracking
+
+Three accumulating tables: `paper_positions` / `live_positions` (parallel schemas), `pnl_events(ts, mode, position_id, realized_delta, unrealized_delta, reason)`, and `cost_breakdown(ts, mode, position_id, gross_pnl, fees_usd, slippage_usd, net_pnl)` where `slippage_usd = (fill_price - mid_price_at_intent) * size`.
+
+The dashboard shows both gross and net-of-fees+slippage PnL.
+
+#### 4.4 Data structure — decisive
+
+**Two parallel ledgers** (`paper_*` and `live_*` tables with identical schemas), NOT a single ledger with a `mode` tag. Forces zero cross-contamination, simplifies SQL, makes paper↔live a clean cutover, and allows running paper indefinitely alongside live for ongoing validation.
+
+```
+paper_trades / live_trades        # every order intent, attempt, outcome
+paper_positions / live_positions  # open and historical positions
+paper_fills / live_fills          # granular per-fill records
+events                            # single shared log with mode tag
+leader_signals                    # mode-independent
+leader_rankings                   # daily roster snapshot
+```
+
+---
+
+### 5. Logging & observability
+
+#### 5.1 Stack — chosen
+
+`structlog` 24.x + stdlib `logging` JSONFormatter, writing to (a) stdout, (b) a daily-rotating file, (c) a SQLite `events` table the dashboard reads directly. No Loki/Grafana — overkill for a single-user local bot.
+
+#### 5.2 Logged events (categories)
+
+Every event: `ts, trace_id, span_id, level, event_name, mode, source, payload, parent_trace_id?`.
+
+* **Leader detection:** `leader_trade_detected`.
+* **Ranking:** `leader_roster_built`, `leader_score_changed`, `wallet_added`, `wallet_dropped`, `wallet_clustered_with`.
+* **Decision:** `signal_received`, `signal_dedup_skipped`, `signal_aggregated`, `signal_rejected` (with reason), `sizing_applied`.
+* **Order lifecycle:** `order_built`, `order_signed`, `order_submitted`, `order_accepted`, `order_filled`, `order_partial_fill`, `order_canceled`, `order_rejected`.
+* **Positions:** `position_opened`, `position_increased`, `position_decreased`, `position_closed`.
+* **PnL:** `pnl_realized`, `pnl_unrealized_snapshot` (every 30 s).
+* **System:** `websocket_connected`, `websocket_disconnected` (with code/reason), `websocket_reconnect_attempt`, `rate_limit_hit`, `rpc_error`, `subgraph_lag_detected`, `bot_started`, `bot_stopped`, `mode_switched`.
+* **Errors:** `exception_caught` (full traceback), `recovery_started`, `recovery_completed`, `kill_switch_triggered`.
+
+#### 5.3 Trace IDs
+
+When `leader_trade_detected` fires, a UUIDv7 (time-sortable) `trace_id` is created. All downstream events inherit it via `structlog.contextvars`. By the time `order_filled` fires, every intermediate decision is queryable as `SELECT * FROM events WHERE trace_id = ?`.
+
+#### 5.4 Storage
+
+* **SQLite (WAL mode)** is the operational store. Settings: `journal_mode=WAL`, `synchronous=NORMAL`, `cache_size=-65536`, `mmap_size=268435456`. Daily VACUUM after the 04:00 UTC ranking job.
+* **DuckDB** (with the `sqlite_scanner` extension) for analytical queries on the events table — no copy needed. The dashboard's log explorer and analytics views use DuckDB.
+
+#### 5.5 Metrics
+
+**Direct SQLite queries from the dashboard.** FastAPI's `GET /metrics` returns canned aggregations as JSON. Dashboard polls every 5 s for top-line; live events fan out via WebSocket.
+
+---
+
+### 6. Dashboard — the cool one
+
+#### 6.1 Stack — decisive
+
+**Next.js 15 (App Router) + React + TypeScript + Tailwind v4 + shadcn/ui + TradingView Lightweight Charts v5 + TanStack Query + a single FastAPI WebSocket for live push.**
+
+Not Streamlit, not Dash, not Tauri, not SvelteKit. Reasoning:
+* Next.js + shadcn is the modern dark-trader-terminal aesthetic.
+* The `coinpulse` reference (Next.js 16 + shadcn + TradingView Lightweight Charts) is precisely this pattern.
+* TradingView Lightweight Charts v5 (current version 5.2.0, Apache-2.0 license, ~190 KB bundle size) avoids the licensing complexity of TradingView's proprietary Charting Library. Per Socket.dev's npm package analysis: "The npm package lightweight-charts receives a total of 263,815 weekly downloads," confirming ecosystem support.
+* Tauri/Electron add packaging complexity for no benefit when the dashboard always runs locally.
+
+#### 6.2 Topology
+
+```
+   ┌───────────────┐    ws + REST     ┌────────────────────┐
+   │   Browser     │ ←──────────────→ │ FastAPI :8787      │
+   │ Next.js :3000 │                  │ control plane      │
+   └───────────────┘                  └────────────────────┘
+                                              │
+                                              ▼
+                                       ┌────────────────┐
+                                       │ SQLite (WAL)   │
+                                       │ bot.db         │
+                                       └────────────────┘
+                                              ▲
+                                              │
+                                       ┌────────────────┐
+                                       │ Bot process    │
+                                       │ (asyncio)      │
+                                       └────────────────┘
+```
+
+Both processes read/write the SQLite file (WAL handles concurrency). The bot publishes events into a `events_outbox` table polled at 100 ms by FastAPI, which fans events out to the browser via a single `/ws` connection.
+
+#### 6.3 Dashboard views
+
+* **A. Overview** — mode badge, equity curve (Lightweight Charts line series), today's gross/net PnL, trade count, win rate, hit rate, max drawdown today, bankroll free vs allocated, kill-switch progress.
+* **B. Positions** — live table `market | outcome | leader(s) | entry | mark | size | unrealized $ | unrealized % | age | exit state`. Row click → market chart with overlay of bot entry/scale-ins/exits and contributing leaders' entries/exits on the same time axis.
+* **C. Closed positions ledger** — filterable, with realized PnL, fees, slippage breakdown, per-leader attribution.
+* **D. Leader leaderboard** — current 30 active + 20 standby, daily/weekly stats, score, score delta vs yesterday, contribution to bot PnL, enable/disable toggle per leader, cold indicator.
+* **E. Markets** — markets the bot is in, time-to-resolution, depth chart (shadcn-styled).
+* **F. Live log feed** — streaming via WS, filterable by category/leader/market/trace ID/level. Click trace → vertical timeline from `leader_trade_detected` → `order_filled`.
+* **G. Daily re-ranking results** — diff vs yesterday: wallets added/dropped, rank ≥ 5 changes, score ≥ 0.1 changes; sparklines of each wallet's 30 d PnL.
+* **H. System health** — WS status (CLOB market, log subscription, FastAPI↔browser), rolling-window rate-limit usage, last leader trade detected per leader, error counts by category, process uptime.
+* **I. Settings** — pause/resume, kill switch, per-leader toggles, mode toggle (paper↔live) gated behind a "type ENABLE LIVE" modal AND the §9 validation precondition.
+* **J. Analytics** — equity curve, 7-d rolling win rate, trade frequency, hold-time distribution histogram, slippage analysis (paper vs live deltas), per-leader PnL contribution waterfall.
+
+#### 6.4 Aesthetic
+
+Dark theme by default. JetBrains Mono for tickers. shadcn/ui throughout; no custom CSS for primitives. Bloomberg-style information density. Live counters animate via Framer Motion.
+
+---
+
+### 7. Tech stack — final, decisive
+
+| Layer | Choice | Why |
+|---|---|---|
+| Bot language | Python 3.11 | `py-clob-client-v2` is official |
+| Async runtime | `asyncio` + `httpx` (HTTP) + `websockets` (raw WS) + `gql` (GraphQL) | Standard, well-supported |
+| Polymarket SDK | **`py-clob-client-v2`** (V1 deprecated April 2026) | Official |
+| EVM access | `web3.py` 7.x | Polygon RPC + log subscription |
+| Process supervisor | `honcho` (Procfile) for dev; `supervisord` or systemd user unit for prod | Lightweight; no Docker needed |
+| Database | SQLite 3.45+ (WAL) | Zero-ops, ACID, perfect for single-user |
+| Analytical queries | DuckDB 1.x with `sqlite_scanner` | Fast aggregations over SQLite |
+| Logging | `structlog` 24.x + stdlib `logging` JSONFormatter | Structured, trace IDs |
+| Control plane | FastAPI + uvicorn (`127.0.0.1:8787`) | REST + WS, trivial DX |
+| Dashboard framework | Next.js 15 (App Router) + TypeScript | De-facto modern stack |
+| UI components | shadcn/ui + Tailwind v4 + Lucide icons | Free "cool" aesthetic |
+| Charts | **TradingView Lightweight Charts v5.2.0** (Apache-2.0) | Smallest/fastest financial charts; no license complexity |
+| Data fetching | TanStack Query v5 + custom WS hook | Cache + invalidation discipline |
+| Animations | Framer Motion | Smooth number tickers |
+| Type validation | Pydantic v2 | Runtime safety on all API responses |
+| Secrets | OS keychain via `keyring` Python | macOS Keychain / Windows Credential Manager / Linux Secret Service |
+| Dependency mgmt | `uv` (Python); `pnpm` (JS) | Fastest installs in 2026 |
+
+#### 7.1 Bot ↔ dashboard wire protocol
+
+* REST: `GET /api/state`, `GET /api/positions`, `GET /api/leaders`, `POST /api/settings/{key}`, `POST /api/kill-switch`, `POST /api/mode` (gated).
+* WebSocket: single `/ws` pushing JSON typed by `kind`: `event`, `position_update`, `pnl_tick`, `leader_signal`, `system_health`.
+
+#### 7.2 Deployment (local)
+
+```bash
+# install
+git clone <repo> polymarket-bot && cd polymarket-bot
+uv venv && uv pip install -e ".[dev]"        # backend
+cd dashboard && pnpm install                  # frontend
+cp .env.example .env                          # fill keys; see §10
+python -m bot.scripts.bootstrap               # mint CLOB API keys, set allowances, smoke test
+# run
+honcho start                                  # bot + fastapi
+cd dashboard && pnpm dev                      # → http://localhost:3000
+```
+
+For always-on machines, wrap with `supervisord` or a systemd user unit (documented in `OPS.md`).
+
+---
+
+### 8. Project structure
+
+```
+polymarket-bot/
+├── pyproject.toml
+├── README.md
+├── OPS.md
+├── .env.example
+├── .gitignore
+│
+├── bot/
+│   ├── __init__.py
+│   ├── main.py                 # asyncio entrypoint
+│   ├── config.py               # Pydantic settings from .env + keychain
+│   ├── modes.py                # Mode enum + guards
+│   │
+│   ├── clob/
+│   │   ├── client.py           # thin wrapper over py-clob-client-v2
+│   │   ├── orders.py           # order builders, FOK helpers
+│   │   ├── ws_market.py        # market channel + book cache
+│   │   └── ws_user.py          # user channel for OUR fills
+│   │
+│   ├── data/
+│   │   ├── gamma.py
+│   │   ├── data_api.py         # positions/trades/activity/leaderboard
+│   │   ├── subgraphs.py        # 5 Goldsky GraphQL clients
+│   │   ├── polygon_logs.py     # Alchemy log subscription for Exchange V2
+│   │   └── coingecko.py        # USDC sanity check
+│   │
+│   ├── discovery/
+│   │   ├── job.py              # daily 04:00 UTC entry
+│   │   ├── candidates.py
+│   │   ├── filters.py
+│   │   ├── scoring.py          # the formula in §2.4
+│   │   ├── antigaming.py       # wash + cluster detection
+│   │   └── roster.py
+│   │
+│   ├── engine/
+│   │   ├── signals.py
+│   │   ├── aggregator.py       # 120s window combiner
+│   │   ├── sizer.py
+│   │   ├── router.py
+│   │   ├── executor.py         # the single execute_order()
+│   │   ├── exits.py
+│   │   ├── conflicts.py
+│   │   └── recovery.py
+│   │
+│   ├── paper/
+│   │   ├── fill_engine.py      # simulator with worst-case adjustment
+│   │   └── book_cache.py
+│   │
+│   ├── ledger/
+│   │   ├── db.py               # SQLite connection, WAL, migrations
+│   │   ├── schemas.sql
+│   │   ├── repo.py
+│   │   └── migrations/
+│   │
+│   ├── observability/
+│   │   ├── log.py              # structlog config
+│   │   ├── trace.py            # UUIDv7 + contextvars
+│   │   └── metrics.py
+│   │
+│   ├── api/                    # FastAPI control plane
+│   │   ├── server.py
+│   │   ├── routes/
+│   │   │   ├── state.py
+│   │   │   ├── positions.py
+│   │   │   ├── leaders.py
+│   │   │   ├── settings.py
+│   │   │   └── kill_switch.py
+│   │   └── ws.py
+│   │
+│   ├── security/
+│   │   ├── keystore.py         # OS keychain via `keyring`
+│   │   └── allowances.py
+│   │
+│   └── scripts/
+│       ├── bootstrap.py
+│       ├── set_allowances.py
+│       ├── derive_proxy.py
+│       └── dump_roster.py
+│
+├── dashboard/
+│   ├── package.json
+│   ├── next.config.mjs
+│   ├── tailwind.config.ts
+│   ├── tsconfig.json
+│   ├── components.json
+│   ├── public/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── layout.tsx
+│   │   │   ├── page.tsx                 # Overview
+│   │   │   ├── positions/page.tsx
+│   │   │   ├── closed/page.tsx
+│   │   │   ├── leaders/page.tsx
+│   │   │   ├── markets/page.tsx
+│   │   │   ├── logs/page.tsx
+│   │   │   ├── reranking/page.tsx
+│   │   │   ├── system/page.tsx
+│   │   │   ├── analytics/page.tsx
+│   │   │   └── settings/page.tsx
+│   │   ├── components/
+│   │   │   ├── ui/                      # shadcn primitives
+│   │   │   ├── ModeBadge.tsx
+│   │   │   ├── EquityCurve.tsx          # lightweight-charts wrapper
+│   │   │   ├── PositionsTable.tsx
+│   │   │   ├── LiveLog.tsx
+│   │   │   └── …
+│   │   ├── lib/
+│   │   │   ├── api.ts
+│   │   │   └── ws.ts
+│   │   └── hooks/
+│   └── README.md
+│
+└── tests/
+    ├── unit/
+    ├── integration/
+    │   └── test_paper_e2e.py            # full paper-trade lifecycle replay
+    └── fixtures/
+```
+
+---
+
+### 9. Phased build plan
+
+#### Phase 1 — Data layer + wallet discovery & ranking (read-only)
+
+**Goal:** Daily discovery job producing a defensible roster, no ability to place orders.
+
+* Repo scaffolded, `uv` env, pre-commit, `ruff` + `pytest` CI.
+* Pydantic settings + populated `.env.example`.
+* SQLite migrations: `leader_candidates`, `leader_rosters`, `events`, `cluster_graph`.
+* Clients: Gamma, Data API, 5 Goldsky subgraphs, Polygon RPC (Alchemy primary, Ankr + public fallback).
+* Daily job: leaderboard pull, candidate union, hard filters, scoring, cluster detection, roster persistence.
+* CLI `dump_roster.py` prints today's roster with reasoning.
+* **Done when:** `python -m bot.discovery.job` runs cleanly twice in a row, produces 30–50 wallets with audit trail; integration test replays a fixed leader through the wash-trading detector and produces the expected score.
+
+#### Phase 2 — Paper trading engine
+
+**Goal:** End-to-end paper copies with realistic fill simulation.
+
+* WS market-channel client with reconnect/heartbeat; in-memory L2 book per market.
+* Polygon log subscription on Exchange V2 with leader-proxy filter.
+* Data API `/trades` polling per leader (3 s stagger).
+* Signal dedup, aggregation, sizing, routing.
+* Paper fill engine with pessimism adjustment.
+* Exit logic, conflict resolution, capacity limits.
+* Crash-recovery reconciliation tested with `kill -9` mid-trade.
+* Structured logging with trace IDs end-to-end.
+* **Done when:** Bot runs 7 consecutive days paper, ≥ 200 simulated trades, every copy has a complete trace chain in `events`, and replaying any trace ID in pure code reproduces the same decision.
+
+#### Phase 3 — Dashboard
+
+**Goal:** All 10 views (§6.3) wired and live.
+
+* Next.js 15 + Tailwind + shadcn scaffold, dark theme.
+* FastAPI control plane (REST + WS fanout).
+* Overview (equity curve via Lightweight Charts) + Positions + Closed ledger.
+* Leader leaderboard + Markets + Live log.
+* Re-ranking diff page + System health.
+* Analytics page (histograms, win rate over time).
+* Settings with gated mode toggle.
+* **Done when:** Browser stays connected 24 hours without reconnect glitches; every panel shows live data; mode toggle correctly gated.
+
+#### Phase 4 — Live trading (gated)
+
+**Validation criteria — all must hold within last 14 days to unlock live:**
+
+* ≥ 14 consecutive days of paper running.
+* ≥ 400 paper trades executed.
+* Net paper PnL after simulated fees + slippage > **+3 %** on bankroll.
+* Paper Sharpe-like (per-day net return / std-dev over the 14 days) > **0.5**.
+* Max paper daily drawdown ≤ **8 %**.
+* Zero "ghost" trades (no trade in ledger without a `leader_trade_detected` parent).
+* Zero unrecovered crash incidents.
+
+Live milestones:
+1. Run `set_allowances.py` on Polygon.
+2. Mint L2 credentials via `bootstrap.py`.
+3. Fund the Safe proxy with $500 USDC on Polygon.
+4. Enable LIVE in dashboard settings; paper keeps running in parallel.
+5. **First 72 h: half-size live** (sizing multiplier 0.5×) with manual monitoring of every trade.
+6. After 72 h with no anomalies: full live sizing.
+7. **Done when:** 30 days live, live PnL within 1σ of paper PnL over the same period.
+
+---
+
+### 10. Risk & failure modes
+
+#### 10.1 Operational risks
+
+* **API outages.** Every API call wrapped in `tenacity` retry with exponential backoff + jitter. After 3 retries, pause *new openings* but continue honoring *exits*.
+* **WebSocket disconnects.** Exponential reconnect (1, 2, 4, 8, …, capped 60 s), re-subscribe, re-fetch book. Every reconnect logged.
+* **RPC failures.** Multi-provider failover: Alchemy → Ankr → `polygon-rpc.com`. Health-check every 30 s; swap primary if Alchemy 5xx-rate > 10 % in last 5 min.
+* **Subgraph lag.** Goldsky lags chain tip 5–30 s; subgraph data never used for trading decisions, only ranking and audit. Lag > 5 min surfaces in system health.
+* **Polymarket chain migration risk.** April 2026 VP-Eng statement confirmed chain migration as a roadmap item. Every chain-specific constant lives behind a `Chain` config; a switch is a config + endpoint change, not a rewrite.
+
+#### 10.2 Strategy / market risks (honest)
+
+* **Smart-money wallets going cold.** Cold-wallet rule (§2.6) + daily re-ranking + per-leader attribution surface this fast.
+* **Adverse selection.** You are by definition last to the trade; leader's edge decays in proportion to copy-volume. The +2-tick FOK price cap and aggregation cap mitigate. Expected live slippage relative to paper: ~30–80 bps in fast markets — reflected in the realistic paper pessimism.
+* **Fees + slippage on a thin bankroll.** $500 × ~5 trades/day ≈ $25/day flow; spread costs of 50–200 bps per round-trip = $0.50–$1.00/day implicit cost. Year-long profitability requires leader net edge to clear ~5–10 % net of costs. Per Andrey Sergeenkov's April 6, 2026 on-chain analysis via Dune Analytics covering 2.5 million addresses on Polygon, 15.9 % of traders are in profit; only 2 % have lifetime profits above $1,000; and only 0.033 % (840 addresses) have earned more than $100,000. Profitability is the exception, not the norm, and the bot must be measured against that base rate.
+* **Resolution risk.** Markets can resolve against an apparently-correct directional read. The §3.5 "6 hours to resolution" exit forces position close-out before resolution exposure.
+* **Wash-trading contamination.** The antigaming layer catches obvious patterns; novel ones will slip through. Weekly manual review of top-contributing leaders is in `OPS.md`.
+
+#### 10.3 Security risks
+
+* **Private key exposure.** Default: key in OS keychain via Python `keyring` (macOS Keychain / Windows Credential Manager / Linux Secret Service). The `.env` carries only the keychain reference, not the key. File mode 600 on `.env`, gitignored.
+* **Stretch:** hardware wallet via `web3.py`'s Ledger middleware or a custom signer. Hardware signing adds ~500–800 ms per order — within the 2-second target. Optional but documented.
+* **Logging redaction.** structlog has a serializer that redacts substrings `key`, `private_key`, `secret`, `passphrase`, `mnemonic`. Never logs the key.
+* **Local network surface.** FastAPI binds to `127.0.0.1` only; dashboard on `localhost`. Remote access via `ssh -L` port-forwarding, never by exposing FastAPI.
+* **Dependency supply chain.** `uv` and `pnpm` verify hashes; lockfiles committed; Dependabot enabled.
+
+#### 10.4 Compliance & ToS
+
+The bot does not bypass any geofencing. The user is responsible for being in a permitted jurisdiction and trading permitted contract types. International Polymarket reopened to US users in Feb 2026, but state-level restrictions apply to specific contract types — confirm before going live.
+
+---
+
+### 11. Free APIs & resources — exhaustive list
+
+| API / resource | URL | Use in bot | Rate limit | Auth |
+|---|---|---|---|---|
+| Polymarket CLOB | `https://clob.polymarket.com` | Orders, market data, tick sizes | 9,000/10s general; POST `/order` 3,500/10s burst, 36,000/10min | L1 + L2 |
+| CLOB WS market | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | Live books for simulator + display | ~5 concurrent WS/IP | None |
+| CLOB WS user | `wss://ws-subscriptions-clob.polymarket.com/ws/user` | OUR own fills/orders | Same | L2 |
+| Polymarket Gamma | `https://gamma-api.polymarket.com` | Market metadata, slug resolution | 4,000/10s; events 500/10s; markets 300/10s | None |
+| Polymarket Data API | `https://data-api.polymarket.com` | Leader trades, positions, leaderboard | 1,000/10s; `/trades` 200/10s; `/positions` 150/10s | None |
+| Data API leaderboard | `https://data-api.polymarket.com/v1/leaderboard` | Daily wallet seeding | included above | None |
+| Goldsky positions subgraph | `…/positions-subgraph/0.0.7/gn` | Cross-validate positions, time series | Public free | None |
+| Goldsky orderbook subgraph | `…/orderbook-subgraph/0.0.1/gn` | Historical fills | Public free | None |
+| Goldsky activity subgraph | `…/activity-subgraph/0.0.4/gn` | Splits/merges/redemptions | Public free | None |
+| Goldsky OI subgraph | `…/oi-subgraph/0.0.6/gn` | Liquidity gating | Public free | None |
+| Goldsky PnL subgraph | `…/pnl-subgraph/0.0.14/gn` | Realized PnL for ranking | Public free | None |
+| The Graph Polymarket | `gateway.thegraph.com/api/<key>/subgraphs/id/Bx1W4S7kDVxs9gC3s2G6DS8kdNBJNVhMviCtin2DiBp` | Backup if Goldsky outage | 100k queries/month free | Free API key |
+| Alchemy Polygon free | `https://polygon-mainnet.g.alchemy.com/v2/<KEY>` | Primary RPC + log subscription on Exchange V2 | 30 million compute units/month free, 25/s burst | Free API key |
+| Alchemy WSS | `wss://polygon-mainnet.g.alchemy.com/v2/<KEY>` | `eth_subscribe("logs", …)` | Same bucket | Free API key |
+| Ankr public Polygon | `https://rpc.ankr.com/polygon` | RPC failover #2 | 200 million API credits/month freemium; 30 RPS public cap | None for public; key optional |
+| Polygon public RPC | `https://polygon-rpc.com` | RPC failover #3 | Best-effort, no SLA | None |
+| Chainlist | `https://chainlist.org/chain/137` | Discover more fallbacks | n/a | None |
+| Polygonscan | `https://api.polygonscan.com/api` | Tx receipts, audit | 5 calls/s free | Free API key |
+| CoinGecko Free | `https://api.coingecko.com/api/v3` | USDC reference price sanity check | 30 calls/min free | None |
+| Dune Analytics free | `https://api.dune.com/api/v1/query/<id>/results` | Custom cross-validation | 2,500 credits/month (~500 query executions); pay-as-you-go at $5.00 per 100 additional credits beyond the bucket | Free API key |
+| Polymarket leaderboard HTML | `https://polymarket.com/leaderboard/overall/monthly/profit` | Manual sanity-check | n/a | None |
+
+**Optional / secondary (third-party views, not for programmatic ingestion):** `polymarketanalytics.com`, `polymarketrankings.com`, `polycopy.app`, `stand.trade`, `polytrackhq.app`, `merlin.trade/leaderboard`. **Optional Python wrapper:** the community `polymarket-apis` PyPI package (Pydantic-typed Gamma/Data/Subgraph/Web3/WebSocket clients) — viable alternative to building clients from scratch.
+
+---
+
+### 12. Appendix — decisions explicitly made (no "either/or")
+
+| Decision | Choice | Rejected |
+|---|---|---|
+| Polymarket SDK | `py-clob-client-v2` | v1 (deprecated April 2026) |
+| Wallet type | EOA + Gnosis Safe proxy (sigtype 2) | Magic-link (sigtype 1, harder to automate); pure EOA (sigtype 0, must pay gas every trade) |
+| Detection path | Data API polling + Polygon log subscription (hybrid) | Subgraph-only (too laggy); user WS (only own trades) |
+| Sizing | Fixed-dollar with rank multiplier | Proportional-to-leader (noisy estimation) |
+| Order type | FOK market at +2 ticks | GTC limit (adverse-selection risk) |
+| Aggregation | Single combined order on contemporaneous signals | N separate orders (slippage compounds) |
+| Conflict resolution | First-mover or higher-score on simultaneous | Vote / average / pick larger leader |
+| Storage | SQLite WAL + DuckDB for analytics | Postgres (over-engineered locally) |
+| Paper / live | Two parallel ledger schemas | Single table with mode tag |
+| Dashboard framework | Next.js + shadcn + Lightweight Charts | Streamlit / Dash / Tauri / SvelteKit |
+| Logging | structlog + JSON → SQLite | Loki/Grafana (overkill) |
+| Metrics | SQL on SQLite → JSON | Prometheus + Grafana (overkill) |
+| Primary RPC | Alchemy Polygon free | Ankr (#2); public Polygon RPC (#3) |
+| Key storage | OS keychain via `keyring` | Plain `.env` (insufficient); HSM (too heavy) |
+| Concurrency | asyncio | Threads (GIL); multiprocessing (state-sharing pain) |
+| Live unlock | 14-day, 400-trade, +3% paper PnL gate | Manual flip (too risky); no gate (irresponsible) |
+
+---
+
+### 13. What's NOT in scope
+
+* Strategy / alpha design — by user mandate, the bot copies, it does not invent.
+* Market making, arbitrage, RFQ — different domain.
+* Multi-account fan-out / running for other users.
+* Tax accounting beyond raw CSV export of fills.
+* Telegram or mobile notifications — the local dashboard is the only UI.
+
+---
+
+## Recommendations
+
+**Immediate (days 1–7).** Build the data layer first (Phase 1). Specifically: pin `py-clob-client-v2`, stand up the SQLite schema with WAL + migrations, implement read-only clients for the 5 Goldsky subgraphs and the three Polymarket APIs, and run the daily ranking job end-to-end. Verify wash-trading detection on 5 known leaderboard wallets (manually audit each result). **Do not write any order-placement code in this phase** — keep the bot read-only until ranking is trustworthy.
+
+**Short term (weeks 2–4).** Phase 2 paper engine. The first integration test that matters is `test_paper_e2e.py`: take a recorded leader trade event, run it through detection → aggregation → sizing → fill simulator → ledger, and assert the full trace chain. The second is `test_crash_recovery.py`: `kill -9` mid-trade, restart, assert zero double-orders.
+
+**Medium term (weeks 5–8).** Phase 3 dashboard. Build the Overview + Positions + Live Log views first; everything else is iterative polish. The mode toggle stays disabled in code until Phase 4.
+
+**Live unlock decision.** Do not flip to live until ALL §9 criteria are satisfied. If 14 days of paper produces less than +3 % net PnL, that is the data telling you the leader-selection or sizing is not yet good enough; iterate, do not flip. **If you flip to live and the first week diverges from paper by more than 1σ, revert to paper.** This is a feature of the architecture (two-ledger setup means switching is one config flag), not a failure.
+
+**Benchmarks that would change recommendations:**
+
+* If Polymarket's chain migration is announced with a date, immediately re-evaluate the RPC layer and confirm Alchemy/Ankr support the destination chain. If they don't, the project is paused until they do — chain-only reads are non-negotiable.
+* If Polymarket deprecates the unauthenticated Data API or the public Goldsky subgraphs, switch to The Graph Network's hosted subgraph (100k queries/month free with API key) and prepare to budget for paid tier if necessary.
+* If `min_order_size` increases (e.g., to 10 shares), revisit the $5 base sizing — at $5/copy and a 10-share minimum, you'd need outcomes priced ≤ $0.50 only, which biases the bot toward one half of every market.
+* If the user's bankroll grows beyond $5,000, switch sizing from fixed-dollar to a Kelly-fractional model — at that bankroll, per-trade dollar floors stop dominating.
+
+---
+
+## Caveats
+
+* **The 25 % wash-trading figure refers to the historical aggregate, not necessarily the current period.** The Columbia / Barnard SSRN paper measured the prior three years; the share in any given week could be higher or lower. Treat it as a planning constant, not a real-time signal.
+* **Latency targets are theoretical.** A 2-second end-to-end target assumes Alchemy's free tier responds in <200 ms and Polymarket's CLOB matches in <600 ms. Both can degrade during high-volume events (sports finals, election nights). The bot's behavior under such conditions is "trade fewer signals, more conservatively"; not "trade harder."
+* **Polymarket's documented rate limits are confirmed via Cloudflare throttling**, but per-endpoint exact numbers (e.g., `/trades` at 200/10s) are reported by third-party reference guides citing the official rate-limit table; the bot enforces conservative client-side limits well below stated maxima and additionally honors `429` responses with backoff.
+* **The CLOB V2 platform has been live only since April 28, 2026.** Subtle behavioral changes (e.g., fee at match time vs placement time) may produce unexpected ledger discrepancies relative to pre-V2 documentation written by third parties — verify against the official docs at `docs.polymarket.com` whenever in doubt.
+* **Profitability is not promised.** The 15.9 %/2 %/0.033 % base rates from on-chain data on 2.5 million addresses tell you the field of which this bot is a member. Copy-trading shifts those odds in your favor only if the underlying leaders are durably skilled — which the daily re-ranking and antigaming layer are designed to maximize but cannot guarantee.
+* **Polymarket's possible chain migration off Polygon could obsolete parts of this plan.** No timeline has been announced. Keep RPC, contract addresses, and chain ID behind configuration to make the migration a config diff rather than a rewrite.
+* **Regulatory landscape is mid-flux.** Polymarket's CFTC posture, state-level lawsuits, and international bans are evolving month-to-month in 2026. Verify your jurisdiction's current status before depositing real funds; do not rely on this document's snapshot for legal advice.
+
+— End of document.
