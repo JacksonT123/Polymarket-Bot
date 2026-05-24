@@ -31,7 +31,7 @@ Polymarket Copy Bot v2.3 — a fully automated copy-trading bot for Polymarket p
 - pytest + pytest-asyncio — testing
 
 ## Current task
-**BOT IS RUNNING** — All phases complete. Bot started, funnel operational, 13 shadow wallets being polled.
+**BOT IS RUNNING** — 16 open positions, 13 shadow wallets. Dashboard at http://localhost:8000.
 
 ## Status
 Complete and running:
@@ -39,31 +39,31 @@ Complete and running:
 - Phase 2: Wallet funnel (Stages A–F) + all 13 metrics ✓
 - Phase 3: Execution engine (poller, filters, sizer, paper fill, order engine) ✓
 - Phase 4: Position management + risk + runner.py ✓
-- Phase 5: Dashboard (FastAPI + HTMX 7-page app + WebSocket) + CLI + notifications ✓
+- Phase 5: Dashboard (FastAPI + true-black terminal UI + WebSocket + live market data) ✓
 - Phase 6: Unit/integration tests + fixtures + docker-compose + CI ✓
 - **Setup**: PostgreSQL running locally, migrations applied, bot started ✓
+- **GitHub**: https://github.com/JacksonT123/Polymarket-Bot.git — all files committed and pushed ✓
 
 ## Recent work (most recent first)
-- **WebSocket rewrite**: `src/data/clob_websocket.py` now connects to `wss://ws-live-data.polymarket.com` (global activity feed). Every trade on the platform includes `proxyWallet` in the payload — filter once against tracked lead wallets for sub-100ms detection. Old endpoint (`/ws/`) was 404. `register()` API unchanged.
-- Fixed signal normalizer: real Polymarket `/activity` uses `side` (BUY/SELL) not `action`/`type`; `outcome` field for YES/NO; `amount` for USD value
-- Fixed orchestrator: shadow candidates with "disqualified" DB status (from prior run) were not being promoted — condition now promotes any non-active/non-suspended wallet
-- Fixed funnel session: `_funnel_loop` was passing `async_sessionmaker` object directly; now wraps in `async with` to get a real session
-- Fixed `compute_stats()`: real API trades use `amount` (not `size_usd`), positions endpoint only shows open positions, win rate now computed from trade-level net PNL per (conditionId, outcome) pair
-- Fixed timestamp parsing: real API `timestamp` field is Unix integer, not ISO string — added `_parse_ts()` helper across stage_b and metrics
-- Discovered Polymarket leaderboard fields: `proxyWallet`, `amount` (PNL), `name` only — no `winRate`, `tradesCount`, `volume`
+- **Fixed dashboard showing zeros (3 bugs, all fixed):**
+  1. `config/settings.py`: `EQUITY_SNAPSHOT_S` 3600→60 — snapshots now every minute (was hourly, seed snapshot showed $0 deployed)
+  2. `src/data/polymarket_client.py`: Added `get_token_price(token_id, condition_id)` using gamma API `outcomePrices` as primary source (CLOB SSL fails on Windows); CLOB midpoint as fallback
+  3. `src/positions/pricer.py`: Switched to `get_token_price`; writes updated price back to in-memory position objects so equity snapshot sees current unrealized P&L
+  4. `src/runner.py` `_equity_snapshot_loop`: Reads fresh positions from DB (`pos_repo.get_open`) instead of stale in-memory list
+- **Dashboard full redesign**: `web/index.html` — true black terminal UI, scrolling ticker tape, live position cards with P&L bars, CoinGecko crypto prices, GDELT news feed, animated equity chart
+- **New API routes**: `src/api/routes/market_data.py` — `/api/data/market`, `/api/data/markets/active`, `/api/data/price`, `/api/data/prices/bulk`, `/api/data/crypto`, `/api/data/news`
+- **setup.py**: Interactive colored CLI with 10-option menu for bot management
+- **WebSocket rewrite**: `src/data/clob_websocket.py` connects to `wss://ws-live-data.polymarket.com` global feed
 
 ## Next steps
-1. **Monitor shadow wallets** — 13 wallets in shadow pool, polled every 15s. Signals detected for shadow wallets will be paper-filled and tracked. After 21 days with ≥20 simulated copies and positive PnL + capture ratio ≥ 0.7, they promote to active.
-2. **Watch for first paper fills** — run `uv run polymarket-bot status` to see paper positions once shadow wallets trade
-3. **Set up dashboard** — dashboard starts automatically at http://localhost:8000 alongside the bot
-4. **Push to GitHub** — `git remote add origin <repo_url> && git push -u origin main`
+1. **Restart the bot** to pick up the 3 bug fixes — run `uv run polymarket-bot start`. After ~60 seconds the dashboard will show real equity/P&L data.
+2. **Verify dashboard** — positions should show current prices, equity curve should update every minute
+3. **Monitor promotion** — 13 shadow wallets, need 21 days + ≥25 copies + ≥0.60 capture ratio to promote to active pool
 
 ## Open questions / blockers
 - POLYMARKET_PRIVATE_KEY not set — live mode locked; paper mode working fine
 - Discord / ntfy credentials not set — notifications go to console logs only
-- GitHub repo not yet created (git initialized locally, no remote)
-- DQ thresholds may need tuning: 24/50 wallets DQ'd for "insufficient_track_record" (< 4 months) — this is working as designed but may need adjustment based on Polymarket market maturity
-- WS activity subscription format not confirmed from docs (used `[{"type": "activity"}]` based on SDK event model). If WS connects but no trade events fire, check subscription payload.
+- Bot must be restarted to pick up the 3 fixes committed this session
 
 ## Key decisions
 - `get_trade_params(tier: int)` takes a tier integer, NOT a bankroll. Always call `compute_tier(bankroll)` first.

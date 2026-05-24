@@ -89,4 +89,29 @@ If this file gets long, do not summarize or prune it yourself. Ask the user befo
 **Commands run:** none
 **Outcome:** clob_websocket.py is now ~100 lines (down from 177). register() API unchanged so poller.py needs no edits. Internal _token_to_wallets and _market_to_wallets mappings removed — wallet address lookup is all that's needed.
 **Notes:** Subscription format discovered from polymarket-apis SDK source at .venv/Lib/site-packages/polymarket_apis/clients/websockets_client.py. ActivityTradeEvent.payload.proxyWallet is present in every trade event. The SDK itself uses lomond (sync) — we use aiohttp for async compat.
+
+---
+
+## [2026-05-23] — Dashboard redesign + live market data APIs
+
+**What:** Complete dashboard overhaul (web/index.html) — true black terminal UI, animated equity curve, position P&L bars, live CoinGecko MATIC/ETH prices, GDELT news feed, scrolling ticker tape. Added new FastAPI router (src/api/routes/market_data.py) with 6 proxy routes: /api/data/market, /api/data/markets/active, /api/data/price, /api/data/prices/bulk, /api/data/crypto, /api/data/news. Registered router in src/api/main.py.
+**Why:** User requested dashboard look/feel of $400B-budget product with live monitoring across all free public APIs.
+**Files touched:** web/index.html — full rewrite; src/api/routes/market_data.py — created; src/api/main.py — modified (import + register market_data router)
+**Outcome:** Dashboard deployed. All 6 proxy routes functional. CoinGecko and GDELT require no API keys.
+**Notes:** GDELT API returns articles array; CoinGecko free tier uses coin IDs "matic-network", "ethereum", "tether". No rate-limit headers on either — handled with aiohttp 8s timeout.
+
+---
+
+## [2026-05-23] — Fix dashboard showing zeros for 16 live positions (3 bugs)
+
+**What:** Fixed three bugs that caused dashboard equity curve and position P&L to read as zero despite 16 open paper positions.
+  1. `config/settings.py`: EQUITY_SNAPSHOT_S 3600 → 60. Hourly snapshots meant the seed snapshot ($0 deployed, $1000 cash) was the current record while 16 positions were open.
+  2. `src/data/polymarket_client.py`: Added `get_token_price(token_id, condition_id)` method. Uses gamma API `outcomePrices` field as primary source (CLOB SSL certificate validation fails on Windows, causing `get_midpoint_price` to silently return None for all positions).
+  3. `src/positions/pricer.py`: Switched `_update_one` from `get_midpoint_price` to `get_token_price`. Also writes updated price/unrealized back to in-memory position objects (`position.current_price = price; position.unrealized_pnl_usd = unrealized`).
+  4. `src/runner.py` `_equity_snapshot_loop`: Replaced `sum(...for p in self._open_positions)` with a fresh DB query (`pos_repo.get_open(is_shadow=False)`). In-memory list was populated at startup and never reflected pricer updates until the next `_refresh_open_positions` call.
+**Why:** Dashboard showed $0 position value and flat equity curve despite bot having 16 open positions worth ~$646 deployed.
+**Files touched:** config/settings.py, src/data/polymarket_client.py, src/positions/pricer.py, src/runner.py — all modified
+**Commands run:** git add + git commit + git push (pushed to https://github.com/JacksonT123/Polymarket-Bot.git)
+**Outcome:** All 4 files committed (commit 0be017d). Bot restart required to pick up changes.
+**Notes:** CLOB SSL failure is silent — get_midpoint_price wraps everything in `except Exception: return None`. Always test price fetching with gamma fallback on Windows. The gamma API `outcomePrices` field is a JSON-encoded string inside the market object; must `json.loads()` it.
 ---
