@@ -173,8 +173,42 @@ class PolymarketClient:
                 params={"token_id": token_id},
             )
             return float(data.get("mid", 0)) or None
-        except PolymarketAPIError:
+        except Exception:
             return None
+
+    async def get_token_price(self, token_id: str, condition_id: str) -> float | None:
+        """
+        Get current price via gamma API (outcomePrices) — reliable on all platforms.
+        Falls back to CLOB midpoint if gamma doesn't have price data.
+        """
+        import json as _json
+        try:
+            raw = await self._get(
+                f"{GAMMA_API}/markets",
+                "gamma.markets",
+                params={"condition_id": condition_id},
+            )
+            market = raw[0] if isinstance(raw, list) and raw else {}
+
+            clob_ids = market.get("clobTokenIds") or "[]"
+            if isinstance(clob_ids, str):
+                clob_ids = _json.loads(clob_ids)
+
+            out_prices = market.get("outcomePrices") or "[]"
+            if isinstance(out_prices, str):
+                out_prices = _json.loads(out_prices)
+
+            if token_id in clob_ids:
+                idx = clob_ids.index(token_id)
+                if idx < len(out_prices):
+                    price = float(out_prices[idx])
+                    if 0.0 < price < 1.0:
+                        return price
+        except Exception:
+            pass
+
+        # Fallback: CLOB midpoint
+        return await self.get_midpoint_price(token_id)
 
     async def close(self) -> None:
         if self._session and not self._session.closed:

@@ -224,8 +224,9 @@ class BotRunner:
                     pos_repo = PositionRepo(session)
                     equity_repo = EquityRepo(session)
                     deployed = await pos_repo.sum_deployed(is_shadow=False)
+                    fresh_positions = await pos_repo.get_open(is_shadow=False)
                     unrealized = sum(
-                        (p.unrealized_pnl_usd or 0.0) for p in self._open_positions
+                        (p.unrealized_pnl_usd or 0.0) for p in fresh_positions
                     )
                     open_count = await pos_repo.count_open(is_shadow=False)
                     last = await equity_repo.get_last()

@@ -28,10 +28,13 @@ class PositionPricer:
 
     async def _update_one(self, position, update_fn) -> None:
         try:
-            price = await self._client.get_midpoint_price(position.token_id)
+            market_id = getattr(position, "market_id", None)
+            price = await self._client.get_token_price(position.token_id, market_id or "")
             if price is not None:
                 unrealized = (price - position.entry_price) * position.size_shares
                 await update_fn(position.id, price, unrealized)
+                position.current_price = price
+                position.unrealized_pnl_usd = unrealized
         except Exception as e:
             log.debug("price_update_failed", position_id=position.id, error=str(e))
 
