@@ -1,0 +1,26 @@
+[
+  {
+    "proxyWalletAddress": "0xabc123abc123abc123abc123abc123abc123abc1",
+    "conditionId": "0xmarket001",
+    "tokenId": "0xtoken001YES",
+    "outcomeIndex": 0,
+    "side": "BUY",
+    "price": 0.62,
+    "size": 16.1,
+    "amount": 10.0,
+    "timestamp": "2026-05-23T10:30:00Z",
+    "transactionHash": "0xtx001"
+  },
+  {
+    "proxyWalletAddress": "0xabc123abc123abc123abc123abc123abc123abc1",
+    "conditionId": "0xmarket002",
+    "tokenId": "0xtoken002YES",
+    "outcomeIndex": 0,
+    "side": "SELL",
+    "price": 0.80,
+    "size": 16.1,
+    "amount": 12.88,
+    "timestamp": "2026-05-23T14:15:00Z",
+    "transactionHash": "0xtx002"
+  }
+]

@@ -1,6 +1,8 @@
-# Polymarket Copy Bot v2.2 — Complete Build Specification
+# Polymarket Copy Bot v2.3 — Complete Build Specification
 
-This is the exhaustive spec for the bot. Every behavior, every number, every rule. Built from primary research across working copy operators (Polycopy, Polycopybot, Polycule, Polycop, Stand.trade, PolyTrack), academic studies (Shen et al. on follower-count alpha decay; Akey/Grégoire/Harvie/Martineau SSRN 6443103 on profit concentration; Gómez-Cram et al. April 2026 on skilled trader minority; LBS Alpha Decay paper; McLean & Pontiff on post-publication decay), and Polymarket's own newsletter "The Oracle" (Stand.trade Ridgely interview, Primo interview on category leaderboards). Calibrated to a $100 paper-trading account with a 10-tier ladder up to $100k+.
+This is the exhaustive spec for the bot. Every behavior, every number, every rule, every formula. Built from primary research across working copy operators (Polycopy, Polycopybot, Polycule, Polycop, Stand.trade, PolyTrack), academic studies (Shen et al. on follower-count alpha decay; Akey/Grégoire/Harvie/Martineau SSRN 6443103 on profit concentration; Gómez-Cram et al. April 2026 on skilled trader minority; LBS Alpha Decay paper; McLean & Pontiff on post-publication decay), and Polymarket's own newsletter "The Oracle" (Stand.trade Ridgely interview, Primo interview on category leaderboards).
+
+**This version is build-ready.** Project structure, tech stack, state machines, exact metric formulas, error handling, deployment, web dashboard, CLI, testing — all included. Hand to Claude Code with confidence.
 
 ---
 
@@ -20,7 +22,7 @@ Three rules that override everything else:
 
 **Rule 2: Pick humans, not bots.** HFT crypto bots dominate Polymarket's 5-minute and 15-minute markets (55–62% of volume). You cannot copy them — by the time you fill, the edge is gone. The auto-rank funnel has to disqualify them at the gate, not score them.
 
-**Rule 3: Minimal filtering at execution.** Working copy bots execute 10–25% of detected signals. The previous version executed 0.5%. The filters were fighting each other because the watchlist was full of uncopyable wallets generating uncopyable signals. v2.1 fixes this upstream — by the time a signal reaches the filter chain, it's already from a wallet worth copying. Execution filters drop to 5.
+**Rule 3: Minimal filtering at execution.** Working copy bots execute 10–25% of detected signals. The previous version executed 0.5%. The filters were fighting each other because the watchlist was full of uncopyable wallets generating uncopyable signals. v2.2 fixes this upstream — by the time a signal reaches the filter chain, it's already from a wallet worth copying. Execution filters drop to 5.
 
 ---
 
@@ -142,7 +144,7 @@ Promotion from shadow to ACTIVE requires ALL of:
 - No catastrophic single-trade loss > 15% of simulated bankroll
 - Lead's win rate during shadow period within ±5% of historical baseline (i.e., they didn't go cold during test)
 
-Wallets failing shadow validation stay in shadow another 14 days or get dropped from the pool after 2 failed cycles.
+Wallets failing shadow validation stay in shadow another 21 days or get dropped from the pool after 2 failed cycles.
 
 ### Stage F — Active Pool (the real watchlist)
 
@@ -491,22 +493,26 @@ WebSocket is faster (~340ms achievable) but more complex and more failure-prone.
 ## Risk Management
 
 ### Position-level
-| Parameter | Value |
-|---|---|
-| Fixed trade size | $5 (at $100 bankroll) |
-| Max open positions | 10 |
-| Max slippage on buy | 10% |
-| Max slippage on sell | 15% |
-| Thesis-broken override | Close if -40% AND lead inactive 24h+ |
-| Hard time stop | 90 days |
+*(Values shown for Tier 0 / $100 bankroll. Trade size and max positions scale with tier ladder — see Position Sizing section.)*
+
+| Parameter | Tier 0 value | Scales with tier? |
+|---|---|---|
+| Fixed trade size | $5 | Yes ($5 → $2,000) |
+| Max open positions | 10 | Yes (10 → 25) |
+| Max slippage on buy | 10% | No |
+| Max slippage on sell | 15% | No |
+| Thesis-broken override | Close if -40% AND lead inactive 24h+ | No |
+| Hard time stop | 90 days | No |
 
 ### Portfolio-level
-| Parameter | Value |
-|---|---|
-| Max capital deployed | 50% of bankroll ($50 at $100) |
-| Reserve | 50% of bankroll always available |
-| Max same-day NEW positions | 5 (prevents cascade on one wallet's bad day) |
-| Max correlation to single market | 1 position per (market_id, side) — enforced by dedup |
+*(Deployment % scales with tier; suspension/correlation rules are constant.)*
+
+| Parameter | Tier 0 value | Scales? |
+|---|---|---|
+| Max capital deployed | 50% of bankroll ($50 at $100) | Yes (50% → 70%) |
+| Reserve | 50% of bankroll | Yes (50% → 30%) |
+| Max same-day NEW positions | 5 | No (prevents cascade on one wallet's bad day) |
+| Max correlation to single market | 1 position per (market_id, side) — enforced by dedup | No |
 
 ### Circuit breakers
 | Trigger | Action | Duration |
@@ -614,74 +620,109 @@ DEMOTION_GRACE_DAYS          = 0        # immediate demotion on drawdown
 MAX_TIERS_PROMOTED_PER_WEEK  = 1        # one tier max per week
 TIER_OVERRIDE                = None     # set to int 0-9 to cap, None for auto
 
-# ─── Wallet Funnel ──────────────────────────────────
-CANDIDATE_POOL_SIZE         = 200     # Stage A: leaderboard pull
-SHADOW_POOL_SIZE            = 20      # Stage D: top 20 after scoring
-ACTIVE_POOL_SIZE            = 5       # Stage F: max active wallets
-SHADOW_MODE_MIN_DAYS        = 14
-SHADOW_MIN_SIMULATED_COPIES = 20
-SHADOW_MAX_SINGLE_LOSS_PCT  = 0.15
+# ─── Wallet Funnel (v2.3) ───────────────────────────
+CANDIDATE_POOL_SIZE             = 200    # Stage A: leaderboard pull
+SHADOW_POOL_SIZE                = 25     # Stage D: top 25 after scoring (v2.2: was 20)
+ACTIVE_POOL_SIZE                = 5      # Stage F: max active wallets
+SHADOW_MODE_MIN_DAYS            = 21     # v2.2: was 14
+SHADOW_MIN_SIMULATED_COPIES     = 25     # v2.2: was 20
+SHADOW_MIN_CAPTURE_RATIO        = 0.60   # v2.2 NEW — required for promotion
+SHADOW_MAX_SINGLE_LOSS_PCT      = 0.15
+SHADOW_MAX_FAILED_CYCLES        = 2      # v2.2 NEW — drop after 2 failed cycles
+SHADOW_LEAD_WR_DRIFT_TOLERANCE  = 0.05   # v2.2 NEW — lead's WR must stay within ±5% of baseline
 
-# ─── Hard Disqualifiers ─────────────────────────────
-DQ_MAX_5MIN_CRYPTO_PCT      = 0.30
-DQ_MAX_15MIN_CRYPTO_PCT     = 0.30
-DQ_MIN_CLOSED_TRADES        = 50
-DQ_MIN_MONTHS_ACTIVE        = 4
-DQ_MAX_TRADES_PER_DAY       = 50
-DQ_MIN_TRADES_PER_DAY       = 0.3
-DQ_MAX_SINGLE_MARKET_PNL    = 0.60    # one-shot wonder
-DQ_MAX_CATEGORY_DIVERSITY   = 8
-DQ_MIN_AVG_HOLD_MINUTES     = 30
-DQ_MIN_WIN_RATE             = 0.55
+# ─── Hard Disqualifiers (v2.2 tightened — 13 total) ─
+DQ_MAX_5MIN_CRYPTO_PCT          = 0.30
+DQ_MAX_15MIN_CRYPTO_PCT         = 0.30
+DQ_MIN_CLOSED_TRADES            = 100    # v2.2: was 50
+DQ_MIN_MONTHS_ACTIVE            = 4
+DQ_MAX_TRADES_PER_DAY           = 30     # v2.2: was 50
+DQ_MIN_TRADES_PER_DAY           = 0.3
+DQ_MAX_SINGLE_MARKET_PNL        = 0.50   # v2.2: was 0.60
+DQ_MAX_CATEGORY_DIVERSITY       = 5      # v2.2: was 8
+DQ_MIN_AVG_HOLD_MINUTES         = 30
+DQ_MIN_WIN_RATE                 = 0.55   # global floor; category floors below override upward
+DQ_MAX_CLUSTER_SIZE             = 2      # v2.2 NEW — requires PolyTrack/clustering data
+DQ_MIN_POSITIVE_ROI             = 0.08   # v2.2 NEW — per LaikaLabs
+DQ_MAX_DRAWDOWN_PCT             = 0.35   # v2.2 NEW
 
-# ─── Scoring Weights ────────────────────────────────
-W_LOG_TRADES                = 0.15
-W_WIN_RATE                  = 0.20
-W_LOG_PROFIT_FACTOR         = 0.15
-W_MONTHS_ACTIVE             = 0.10
-W_DOMAIN_SCORE              = 0.20
-W_HOLDING_TIME              = 0.10
-W_ENTROPY                   = -0.05
-W_INSIDER_FLAG              = -0.05
-W_MAX_DRAWDOWN              = -0.10
+# Category-specific win rate floors (v2.2 NEW)
+# Applied AFTER global floor; whichever is HIGHER wins for that wallet
+CATEGORY_WIN_RATE_FLOORS = {
+    "soccer":      0.58,
+    "politics":    0.60,
+    "geopolitics": 0.60,
+    "sports_us":   0.56,   # NFL, NBA, MLB — market-makers run here
+    "weather":     0.65,
+    "mention":     0.60,
+    "macro":       0.60,
+    "finance":     0.60,
+    "crypto":      0.60,   # non-HFT only; HFT excluded above
+    "culture":     0.58,
+    "tech":        0.58,
+    "_default":    0.55,
+}
+
+# ─── Scoring Weights (v2.2 — 13 factors) ────────────
+W_LOG_TRADES                    = 0.10   # v2.2: was 0.15
+W_WIN_RATE_VS_CATEGORY_FLOOR    = 0.18   # v2.2 NEW (replaces W_WIN_RATE)
+W_LOG_PROFIT_FACTOR             = 0.15
+W_MONTHS_ACTIVE                 = 0.08   # v2.2: was 0.10
+W_DOMAIN_SCORE                  = 0.20
+W_HOLD_TO_RESOLUTION_PCT        = 0.12   # v2.2 NEW (replaces W_HOLDING_TIME)
+W_CONSISTENCY_SCORE             = 0.10   # v2.2 NEW — std-dev of monthly returns
+W_CONVICTION_SIGNAL             = 0.08   # v2.2 NEW — winner-size vs loser-size
+W_COUNTER_TRADE_SIGNAL          = 0.05   # v2.2 NEW — bidirectional (±)
+W_ENTROPY                       = -0.05
+W_INSIDER_PROXIMITY             = -0.05  # v2.2 renamed from W_INSIDER_FLAG
+W_MAX_DRAWDOWN                  = -0.08  # v2.2: was -0.10
+W_CROWDING_PENALTY              = -0.10  # v2.2 NEW — academic-backed (Shen et al.)
+
+# ─── Active Wallet Suspension (v2.2) ────────────────
+SUSPEND_CONSECUTIVE_LOSSES      = 3
+SUSPEND_CAPTURE_RATIO_FLOOR     = 0.40   # v2.2 NEW — suspend if bot capture drops below this
+SUSPEND_CAPTURE_LOOKBACK_TRADES = 20
+SUSPEND_LEAD_SILENT_DAYS        = 14
+SUSPEND_CROWDING_SPIKE_PCT      = 0.50   # v2.2 NEW — suspend on >50% popularity spike
+PERMANENT_DROP_AFTER_N_SUSPENSIONS_IN_60D = 2  # v2.2 NEW
 
 # ─── Execution Filters ──────────────────────────────
-MIN_LEAD_TRADE_USD          = 5
-MIN_MARKET_VOLUME_24H_USD   = 5000
-MIN_PRICE                   = 0.05
-MAX_PRICE                   = 0.95
-MAX_HOURS_TO_RESOLUTION     = 60 * 24    # 60 days
-MIN_HOURS_TO_RESOLUTION     = 2
+MIN_LEAD_TRADE_USD              = 5
+MIN_MARKET_VOLUME_24H_USD       = 5000
+MIN_PRICE                       = 0.05
+MAX_PRICE                       = 0.95
+MAX_HOURS_TO_RESOLUTION         = 60 * 24    # 60 days
+MIN_HOURS_TO_RESOLUTION         = 2
 
 # ─── Order Placement ────────────────────────────────
-MAX_BUY_SLIPPAGE_PCT        = 0.10
-MAX_SELL_SLIPPAGE_PCT       = 0.15
-ORDER_RETRY_PHASES          = 3
-ORDER_PHASE_1_TOLERANCE     = 0.00    # FOK at exact price
-ORDER_PHASE_2_TOLERANCE     = 0.02    # FOK ±2%
-ORDER_PHASE_3_TOLERANCE     = 0.10    # Market with max-slippage
+MAX_BUY_SLIPPAGE_PCT            = 0.10
+MAX_SELL_SLIPPAGE_PCT           = 0.15
+ORDER_RETRY_PHASES              = 3
+ORDER_PHASE_1_TOLERANCE         = 0.00       # FOK at exact price
+ORDER_PHASE_2_TOLERANCE         = 0.02       # FOK ±2%
+ORDER_PHASE_3_TOLERANCE         = 0.10       # Market with max-slippage
 
 # ─── Exits ──────────────────────────────────────────
-EXIT_MODE                   = "mirror_lead"
-THESIS_BROKEN_THRESHOLD     = -0.40
-THESIS_BROKEN_LEAD_QUIET_H  = 24
-HARD_TIME_STOP_DAYS         = 90
+EXIT_MODE                       = "mirror_lead"
+THESIS_BROKEN_THRESHOLD         = -0.40
+THESIS_BROKEN_LEAD_QUIET_H      = 24
+HARD_TIME_STOP_DAYS             = 90
 
 # ─── Circuit Breakers ───────────────────────────────
-DAILY_LOSS_HALT_PCT         = 0.15
-WEEKLY_LOSS_HALT_PCT        = 0.25
-PERMANENT_HALT_DRAWDOWN_PCT = 0.40
-WALLET_CONSEC_LOSS_LIMIT    = 3
+DAILY_LOSS_HALT_PCT             = 0.15
+WEEKLY_LOSS_HALT_PCT            = 0.25
+PERMANENT_HALT_DRAWDOWN_PCT     = 0.40
 
 # ─── Polling Intervals ──────────────────────────────
-ACTIVITY_POLL_S             = 15
-POSITION_PRICE_UPDATE_S     = 30
-WALLET_HEALTH_CHECK_S       = 86400      # daily Stage A–D rerun
-SHADOW_REVIEW_S             = 86400      # daily promotion check
-ACTIVE_REVIEW_S             = 604800     # weekly active-pool review
+ACTIVITY_POLL_S                 = 15
+POSITION_PRICE_UPDATE_S         = 30
+WALLET_HEALTH_CHECK_S           = 86400      # daily Stage A–D rerun
+SHADOW_REVIEW_S                 = 86400      # daily promotion check
+ACTIVE_REVIEW_S                 = 604800     # weekly active-pool review
+CLUSTER_DETECTION_RERUN_S       = 604800     # weekly (v2.2)
 
 # ─── Mode ───────────────────────────────────────────
-TRADING_MODE                = "PAPER"
+TRADING_MODE                    = "PAPER"
 ```
 
 ---
@@ -690,17 +731,29 @@ TRADING_MODE                = "PAPER"
 
 ### `wallets`
 ```sql
-id, address, alias, status, 
+id, address, alias, status,
   -- status: candidate | disqualified | shadow | active | suspended | dropped
-disqualified_reason,
+disqualified_reasons,            -- array; multiple DQ reasons possible
 composite_score,
 win_rate, closed_trades_count, months_active,
 primary_category, category_diversity_count,
+category_win_rate_floor,         -- v2.2: applied per-wallet from CATEGORY_WIN_RATE_FLOORS
 avg_holding_minutes, max_drawdown_pct, single_market_pnl_pct,
 volume_5min_crypto_pct, volume_15min_crypto_pct,
+positive_roi_pct,                -- v2.2: avg ROI on positive resolved trades
+hold_to_resolution_pct,          -- v2.2: % of positions held to resolution
+consistency_score,               -- v2.2: std-dev of monthly returns (lower = better)
+conviction_signal,               -- v2.2: winner_avg_size / loser_avg_size
+crowding_score,                  -- v2.2: estimated follower count / public attention
+crowding_score_baseline,         -- v2.2: snapshot at activation for delta detection
+cluster_id, cluster_size,        -- v2.2: from PolyTrack or manual analysis
+insider_proximity_score,         -- v2.2: trades-near-news anomaly score
 last_trade_at, shadow_started_at, activated_at, suspended_at,
-shadow_copies_count, shadow_pnl_usd,
+shadow_copies_count, shadow_pnl_usd, shadow_capture_ratio,    -- v2.2
+shadow_failed_cycles,            -- v2.2: increments on each failed shadow validation
 consecutive_losses_for_bot,
+recent_capture_ratio,            -- v2.2: rolling capture ratio over last 20 copies
+suspension_count_60d,            -- v2.2: for permanent-drop trigger
 notes
 ```
 
@@ -753,42 +806,43 @@ shadow_period (true if from shadow phase)
 ## Rollout Plan
 
 ### Stage 1: Funnel Calibration (Week 1)
-- Implement v2.1 spec including full funnel
+- Implement v2.3 spec including full funnel
 - Let Stage A–D run for 3 days; observe which wallets land in shadow pool
-- Manually inspect the top 20 — do they look like real specialists?
+- Manually inspect the top 25 — do they look like real specialists?
 - **Success criteria**: shadow pool contains ≥ 10 wallets that pass eyeball test
 - **Failure mode**: shadow pool dominated by Théo-cluster or named bots → tighten hard disqualifiers
 
-### Stage 2: Shadow Validation (Weeks 2–4)
-- Let shadow pool run paper trades for 14+ days
+### Stage 2: Shadow Validation (Weeks 2–5)
+- Let shadow pool run paper trades for 21+ days
 - Watch which wallets generate good simulated copy P&L vs bad
+- Watch capture ratio per wallet — must be ≥ 60% for promotion
 - **Success criteria**: ≥ 3 wallets pass shadow promotion criteria
 - **Failure mode**: <3 pass → loosen Stage E thresholds OR funnel is rejecting too aggressively
 
-### Stage 3: Active Paper (Weeks 4–8)
+### Stage 3: Active Paper (Weeks 5–9)
 - Top 5 promoted wallets become active
 - 4 weeks of paper trading with real signal-to-execution measurement
-- Daily review: per-wallet P&L, signal-to-exec ratio, slippage vs lead
+- Daily review: per-wallet P&L, signal-to-exec ratio, slippage vs lead, capture ratio
 - **Success criteria**: signal-to-execution ratio 10–25%; bot captures ≥ 60% of unweighted average net return of active leads over 50+ trades
 - **Failure mode**: capture <40% → slippage problem or wallet-selection problem (re-check funnel)
 
-### Stage 4: Micro-Live (Weeks 9–12)
+### Stage 4: Micro-Live (Weeks 10–13)
 - Only proceed if Stage 3 succeeded AND legal question resolved
-- $25 real capital, $2 fixed trades
+- $25 real capital, $2 fixed trades (manual Tier 0 override)
 - Validate plumbing, real fees, real slippage
 - **Success criteria**: 50+ live trades, technical reliability >95%, measured slippage within ±50% of paper assumptions
 
-### Stage 5: Scale Decision (Week 13+)
+### Stage 5: Scale Decision (Week 14+)
 | Stage 4 result | Action |
 |---|---|
-| Net positive, capture ≥80% of leads | Scale to $100, then $500 over 2 months |
-| Net flat (±5%) | Stay at $25–$100; study weak spots |
+| Net positive, capture ≥80% of leads | Remove tier override, let ladder auto-promote |
+| Net flat (±5%) | Stay at $25–$100 with tier override; study weak spots |
 | Net negative | Shelve. Strategy works for paper, not live — likely slippage/latency you can't fix |
 
 **Hard caps regardless of success:**
-- Never scale faster than 2× per quarter
+- Never scale faster than 2× per quarter (tier ladder already enforces 1 tier/week max)
 - Never run more than 5 active wallets
-- Never raise `MAX_TRADE_SIZE_USD` above 10% of bankroll
+- The tier ladder caps trade size at $2,000 (Tier 9); do not override above this
 
 ---
 
@@ -842,9 +896,9 @@ TIER PROGRESS:
   Rolling 7d avg: $128 (need $250 for Tier 1)
   Days above next threshold: 0 / 7
 
-SHADOW POOL: 14 wallets tracking
-  - 3 candidates close to promotion (shadow P&L > $0)
-  - 2 candidates flagged for drop (shadow P&L < -$10)
+SHADOW POOL: 25 wallets tracking
+  - 3 candidates close to promotion (shadow P&L > $0, capture ≥ 50%)
+  - 2 candidates flagged for drop (shadow P&L < -$10 or capture < 30%)
 
 FUNNEL: 23 wallets in scoring pool, 177 disqualified today
 Circuit breakers: clear
@@ -871,7 +925,7 @@ Circuit breakers: clear
 - **No short selling.** Buy YES or buy NO; never both.
 - **No position averaging.** One entry per (market, side) per dedup window.
 - **No HFT crypto markets.** Wallets trading them are disqualified at funnel Stage B.
-- **No bypassing shadow mode.** Even hand-picked candidates go through 14-day shadow first.
+- **No bypassing shadow mode.** Even hand-picked candidates go through 21-day shadow first.
 
 ---
 
@@ -893,31 +947,1145 @@ Circuit breakers: clear
 
 ---
 
-## Quick Reference: v1 → v2.2 Diff
+## Tech Stack & Project Structure
 
-| Component | v1 | v2.1 | v2.2 |
-|---|---|---|---|
-| Watchlist source | Top 20 by 9-factor score | Funnel: 200 → 20 shadow → 5 active | **Funnel: 200 → 25 shadow → 5 active + bench, with cluster detection** |
-| Hard disqualifiers | None | 11 | **13 (added cluster size, ROI floor, tightened thresholds)** |
-| Category-specific win rate floors | No | No | **Yes — 56% to 65% depending on category** |
-| Scoring factors | 9 | 9 | **13 (added consistency, conviction, counter-trade, crowding penalty)** |
-| Cluster detection | No | No | **Yes (PolyTrack integration, $9.99/wk)** |
-| Capture ratio measurement | No | Implicit | **Explicit — required ≥ 60% for promotion** |
-| Shadow validation period | None | 14 days | **21 days** |
-| Counter-trading known losers | No | No | **Yes — inverted score for high-volume losers** |
-| Crowding penalty (popularity hurts edge) | No | No | **Yes — academic-backed (Shen et al.)** |
-| Re-score cadence | Every 6 hours | Daily | Daily |
-| Execution filters | 11 | 5 | 5 (unchanged) |
-| Min lead trade size | $100 | $5 | $5 (unchanged) |
-| Stop-loss | 20% fixed | None | None (unchanged) |
-| Position sizing | Fixed $5–$10 | Fixed $5–$10 | 10-tier ladder $5 → $2,000 (added in v2.1) |
-| Bot can copy HFT crypto | Yes | No | No (unchanged) |
+### Stack decisions (locked in)
+
+| Layer | Choice | Rationale |
+|---|---|---|
+| Language | **Python 3.11+** | py-clob-client-v2 is Python; richest async ecosystem |
+| Package manager | **uv** (or Poetry fallback) | Faster, deterministic |
+| Async runtime | **asyncio + aiohttp** | All I/O is network — sync would block |
+| Database | **PostgreSQL 15+** (SQLite for paper-only) | Concurrent writes from poller + dashboard + executor |
+| ORM | **SQLAlchemy 2.0 async** | Mature async support |
+| Migrations | **Alembic** | Standard with SQLAlchemy |
+| Web framework | **FastAPI** | Async-native, OpenAPI built-in, WebSockets |
+| Frontend | **HTMX + Alpine.js + Tailwind** | No build step, server-rendered, minimal deps |
+| Charts | **Plotly.js** (via CDN) | Interactive equity curves, no React needed |
+| Process manager | **systemd** (Linux) or **Docker Compose** | Auto-restart, log capture |
+| Logging | **structlog** → JSON → file + Loki (optional) | Structured queryable logs |
+| Monitoring | **Prometheus client** + Grafana | Industry standard, free tier |
+| Notifications | **Discord webhook** + **ntfy.sh** (mobile push) | Both free, both reliable |
+| Polymarket SDK | **polymarket-apis (pypi)** | Unified V2 Clob+Gamma+Data+Web3+WS |
+| Web3 | **web3.py 7.x** | EIP-712 signing for orders |
+| Goldsky (optional) | **goldsky-sdk** | For Tier 4+ WebSocket upgrade |
+| Testing | **pytest + pytest-asyncio + respx** | Mock HTTP, async-aware |
+| Code quality | **ruff + mypy** | Linter + type checker |
+
+### Project structure
+
+```
+polymarket-bot/
+├── pyproject.toml              # Dependencies + tooling config
+├── README.md
+├── .env.example
+├── docker-compose.yml          # Optional deployment
+├── alembic.ini
+│
+├── config/
+│   ├── settings.py             # ALL constants from this spec
+│   ├── validators.py           # Startup config validation
+│   └── secrets.py              # Loads from .env / Vault / Keychain
+│
+├── src/
+│   ├── core/
+│   │   ├── models.py           # Pydantic models (Wallet, Signal, Position, etc.)
+│   │   ├── enums.py            # WalletStatus, SignalStatus, ExitReason, Tier
+│   │   ├── exceptions.py       # CustomExceptions
+│   │   └── clock.py            # Centralized time (testable, UTC always)
+│   │
+│   ├── data/
+│   │   ├── polymarket_client.py    # Wraps polymarket-apis
+│   │   ├── goldsky_client.py       # Optional, Tier 4+
+│   │   ├── polytrack_client.py     # Cluster detection
+│   │   ├── rate_limiter.py         # Token bucket per endpoint
+│   │   └── cache.py                # In-memory TTL cache for market metadata
+│   │
+│   ├── funnel/                     # Wallet selection pipeline
+│   │   ├── stage_a_candidates.py
+│   │   ├── stage_b_disqualifiers.py
+│   │   ├── stage_c_scoring.py
+│   │   ├── stage_d_ranking.py
+│   │   ├── stage_e_shadow.py
+│   │   ├── stage_f_active.py
+│   │   └── orchestrator.py         # Runs the full pipeline
+│   │
+│   ├── execution/
+│   │   ├── poller.py               # 15s wallet activity poller
+│   │   ├── signal_normalizer.py    # API trade → internal Signal
+│   │   ├── filters.py              # 5 execution filters
+│   │   ├── sizer.py                # Tier-based position sizing
+│   │   ├── order_engine.py         # CLOB order placement (3-phase retry)
+│   │   ├── paper_fill.py           # Paper mode simulator
+│   │   └── queue.py                # Event queue (asyncio.Queue or Redis)
+│   │
+│   ├── positions/
+│   │   ├── tracker.py              # Position state machine
+│   │   ├── pricer.py               # 30s price update loop
+│   │   ├── exiter.py               # Mirror + resolve + thesis-broken + time-stop
+│   │   └── reconciler.py           # Verify DB matches on-chain (live mode)
+│   │
+│   ├── risk/
+│   │   ├── circuit_breakers.py
+│   │   ├── tier_manager.py         # Tier promotion/demotion logic
+│   │   ├── caps.py                 # Position count, deployment %, correlation
+│   │   └── killswitch.py           # Emergency halt
+│   │
+│   ├── metrics/                    # All scoring/analysis calculations
+│   │   ├── capture_ratio.py
+│   │   ├── consistency.py
+│   │   ├── conviction.py
+│   │   ├── crowding.py
+│   │   ├── insider.py
+│   │   ├── clustering.py
+│   │   ├── category.py             # Market → category classification
+│   │   ├── hold_to_resolution.py
+│   │   └── slippage_estimator.py
+│   │
+│   ├── db/
+│   │   ├── engine.py               # Async SQLAlchemy engine
+│   │   ├── models.py               # ORM models
+│   │   ├── repositories.py         # Data access layer
+│   │   └── migrations/             # Alembic
+│   │
+│   ├── api/                        # FastAPI backend for dashboard
+│   │   ├── main.py
+│   │   ├── deps.py                 # FastAPI dependencies
+│   │   ├── routes/
+│   │   │   ├── equity.py
+│   │   │   ├── wallets.py
+│   │   │   ├── positions.py
+│   │   │   ├── signals.py
+│   │   │   ├── funnel.py
+│   │   │   ├── config_routes.py
+│   │   │   └── health.py
+│   │   └── websocket.py            # Live updates push
+│   │
+│   ├── notifications/
+│   │   ├── discord.py
+│   │   ├── ntfy.py
+│   │   └── alerts.py               # Alert routing + dedup
+│   │
+│   ├── cli/
+│   │   ├── main.py                 # Click-based CLI
+│   │   └── commands/
+│   │       ├── status.py
+│   │       ├── wallets.py
+│   │       ├── positions.py
+│   │       ├── force_exit.py
+│   │       ├── tier.py
+│   │       └── backtest.py
+│   │
+│   └── runner.py                   # Main entry point — orchestrates all loops
+│
+├── web/                            # Dashboard frontend (static, served by FastAPI)
+│   ├── index.html
+│   ├── static/
+│   │   ├── css/tailwind.css
+│   │   └── js/
+│   │       ├── htmx.min.js
+│   │       ├── alpine.min.js
+│   │       └── plotly.min.js
+│   └── components/                 # Server-rendered HTMX partials
+│       ├── equity_chart.html
+│       ├── tier_card.html
+│       ├── wallet_table.html
+│       ├── positions_table.html
+│       ├── signals_feed.html
+│       └── funnel_view.html
+│
+├── tests/
+│   ├── unit/                       # Test pure functions, formulas
+│   │   ├── test_filters.py
+│   │   ├── test_sizer.py
+│   │   ├── test_scoring.py
+│   │   ├── test_capture_ratio.py
+│   │   └── test_tier_manager.py
+│   ├── integration/                # Test with mocked API
+│   │   ├── test_funnel_pipeline.py
+│   │   ├── test_order_engine.py
+│   │   └── test_exiter.py
+│   ├── fixtures/                   # Captured API responses
+│   │   ├── leaderboard_sample.json
+│   │   ├── wallet_activity_sample.json
+│   │   └── market_metadata_sample.json
+│   └── conftest.py
+│
+└── scripts/
+    ├── backtest.py                 # Run funnel on historical date range
+    ├── seed_db.py                  # Initialize fresh DB
+    ├── reset_paper.py              # Wipe paper state, keep funnel
+    └── export_results.py           # CSV export of all trades for analysis
+```
 
 ---
 
-That's the spec. Auto-ranking is preserved and made smarter: hard disqualifiers at the gate to kill HFT bots and one-shot wonders, composite scoring on the survivors, mandatory shadow-mode validation before any real signal flows. Build to this and the 1,400/7/0 pattern will not repeat.
+## Exact Metric Formulas
 
-When you're ready to start coding, say the word — wallet funnel module first, then polling loop, then filter chain, then execution engine.
+Every metric referenced anywhere in this spec, with exact computation rules. No ambiguity.
+
+### Win rate
+
+```python
+win_rate = winning_resolved_trades / total_resolved_trades
+```
+
+Only **resolved** trades count. Open positions and disputed/invalid resolutions are excluded.
+
+### Profit factor
+
+```python
+profit_factor = sum(realized_pnl for trade in wins) / abs(sum(realized_pnl for trade in losses))
+```
+
+If no losses, set profit_factor = 10.0 (capped) to avoid divide-by-zero.
+
+### Excess win rate above category floor
+
+```python
+category_floor = CATEGORY_WIN_RATE_FLOORS.get(primary_category, CATEGORY_WIN_RATE_FLOORS["_default"])
+effective_floor = max(category_floor, DQ_MIN_WIN_RATE)  # 0.55 global minimum
+excess_wr = max(0, wallet_win_rate - effective_floor)
+# Scaled 0–1 across the realistic range: 0% excess = 0.0, 15%+ excess = 1.0
+win_rate_vs_category_floor_score = min(1.0, excess_wr / 0.15)
+```
+
+### Domain score (specialization)
+
+```python
+# % of total volume in the wallet's most-traded category
+primary_category, primary_volume_pct = max(
+    category_volume_breakdown.items(), 
+    key=lambda kv: kv[1]
+)
+# Reward concentration: 60% in one cat = 1.0, 33% = 0.0
+domain_score = max(0, (primary_volume_pct - 0.33) / (0.60 - 0.33))
+domain_score = min(1.0, domain_score)
+```
+
+### Hold-to-resolution %
+
+```python
+# For each closed position, was it held until the market resolved (not exited early)?
+held_to_resolution_count = sum(
+    1 for pos in closed_positions
+    if pos.closed_at >= pos.market_resolution_time - timedelta(hours=2)
+)
+hold_to_resolution_pct = held_to_resolution_count / len(closed_positions)
+```
+
+The 2-hour buffer accounts for last-minute close-outs that are effectively at resolution.
+
+### Consistency score
+
+```python
+# Group resolved P&L by calendar month
+monthly_returns = group_pnl_by_month(resolved_trades)  # list of monthly $ returns
+
+if len(monthly_returns) < 3:
+    consistency_score = 0.5  # neutral until enough data
+else:
+    mean_return = statistics.mean(monthly_returns)
+    if mean_return <= 0:
+        consistency_score = 0.0  # not profitable on average — no consistency credit
+    else:
+        # Coefficient of variation; lower = more consistent
+        std_dev = statistics.stdev(monthly_returns)
+        cv = std_dev / mean_return
+        # CV of 0.5 = excellent, CV of 2.0+ = chaotic
+        consistency_score = max(0, 1 - (cv / 2.0))
+```
+
+### Conviction signal
+
+```python
+# Position size on winners vs losers — real conviction means betting bigger on wins
+winner_sizes = [pos.cost_usd for pos in wins]
+loser_sizes = [pos.cost_usd for pos in losses]
+
+if not winner_sizes or not loser_sizes:
+    conviction_signal = 0.5  # neutral until enough data
+else:
+    avg_winner = statistics.median(winner_sizes)
+    avg_loser = statistics.median(loser_sizes)
+    ratio = avg_winner / avg_loser  # > 1.0 means winners are larger
+
+    # Ratio of 1.0 = no conviction differential → 0.0
+    # Ratio of 3.0+ = strong conviction → 1.0
+    conviction_signal = min(1.0, max(0, (ratio - 1.0) / 2.0))
+```
+
+Uses MEDIAN not mean to avoid outlier contamination (one $5M bet shouldn't dominate).
+
+### Counter-trade signal
+
+```python
+# Per Stand.trade: high-volume losers can be counter-traded profitably
+# This is a BIDIRECTIONAL factor — positive for normal scoring, NEGATIVE inverted for counter-list
+
+if wallet.net_pnl_usd < -5000 and wallet.total_volume_usd > 50000:
+    # High-volume losers: useful as counter-trade signal
+    counter_trade_signal = -1.0  # NEGATIVE entry score (we'd invert their trades)
+    wallet.is_counter_trade_candidate = True
+else:
+    counter_trade_signal = 0.0
+```
+
+Counter-trade candidates go into a SEPARATE shadow pool that mirrors their trades INVERTED (buy NO when they buy YES). Default: disabled. Enable via `ENABLE_COUNTER_TRADE_SHADOW = True`.
+
+### Crowding penalty
+
+```python
+# Proxy for follower count / public attention
+crowding_score = 0
+crowding_score += min(0.4, wallet.polymarket_followers / 1000)  # Polymarket native
+crowding_score += min(0.3, wallet.twitter_mentions_30d / 100)   # Social mentions
+crowding_score += min(0.3, wallet.appears_in_oracle_newsletter * 0.3)  # Featured in The Oracle
+
+# 0.0 = unknown, 1.0 = very famous
+# Penalty is applied with weight W_CROWDING_PENALTY = -0.10
+```
+
+**Implementation note**: Twitter mention count requires a separate scraping pipeline (e.g., periodic search for the wallet's username). If unavailable, default to 0.
+
+### Insider proximity score
+
+```python
+# Did the wallet trade unusually close to news breaks?
+# Requires news event timestamp dataset (Polysights provides this in their Beta Insider Finder)
+
+suspicious_trade_count = 0
+for trade in wallet.recent_trades(days=90):
+    matching_news = find_news_events(
+        market_id=trade.market_id,
+        time_window=(trade.timestamp, trade.timestamp + timedelta(hours=6))
+    )
+    if matching_news and trade.timestamp < matching_news[0].timestamp:
+        # Wallet traded BEFORE news broke
+        suspicious_trade_count += 1
+
+insider_proximity_score = min(1.0, suspicious_trade_count / 10)
+# 0 suspicious trades = 0.0 (fine)
+# 10+ suspicious trades = 1.0 (max penalty)
+```
+
+If no news-event dataset available, the bot logs `insider_proximity_score = 0` and notes data unavailable in the wallet record.
+
+### Max drawdown %
+
+```python
+# Walk through wallet's equity curve (cumulative P&L over time)
+equity_curve = compute_cumulative_pnl_by_day(wallet.resolved_trades)
+
+peak = 0
+max_dd = 0
+for point in equity_curve:
+    if point > peak:
+        peak = point
+    if peak > 0:
+        drawdown = (peak - point) / peak
+        max_dd = max(max_dd, drawdown)
+
+max_drawdown_pct = max_dd  # 0.0 = no DD, 0.40 = 40% peak-to-trough
+```
+
+### Cluster size
+
+```python
+# If PolyTrack subscription active:
+cluster_size = polytrack_client.get_cluster(wallet.address).size
+
+# If not (DIY heuristic — basic but functional):
+def detect_cluster_diy(wallet, candidate_pool):
+    """Returns probable cluster size based on funding correlation."""
+    funding_source = wallet.first_funding_tx.from_address  # Common Kraken/Coinbase address
+    funding_amount = wallet.first_funding_tx.value_usd
+
+    related = []
+    for other in candidate_pool:
+        if other.address == wallet.address:
+            continue
+        same_funder = (other.first_funding_tx.from_address == funding_source)
+        similar_amount = abs(other.first_funding_tx.value_usd - funding_amount) / funding_amount < 0.1
+        funded_close_in_time = abs(
+            (other.first_funding_tx.timestamp - wallet.first_funding_tx.timestamp).days
+        ) < 7
+        if same_funder and (similar_amount or funded_close_in_time):
+            related.append(other)
+    
+    return 1 + len(related)
+```
+
+DIY clustering is weaker than PolyTrack but free. If a wallet has cluster_size > 2, flag for manual review before active promotion.
+
+### Capture ratio
+
+```python
+# THE single most important metric for the bot
+# Measures: how much of the lead's P&L did the bot's copies capture?
+
+def compute_capture_ratio(wallet_id, lookback_days=21):
+    bot_copies = get_bot_copies_of_wallet(wallet_id, lookback_days)
+    lead_trades = get_lead_trades(wallet_id, lookback_days)
+
+    bot_pnl = sum(c.realized_pnl_usd + c.unrealized_pnl_usd for c in bot_copies)
+    lead_pnl = sum(t.realized_pnl_usd + t.unrealized_pnl_usd for t in lead_trades)
+    
+    # NORMALIZE for size difference (bot bets fixed $5–$2000, lead bets variable)
+    bot_total_invested = sum(c.cost_usd for c in bot_copies)
+    lead_total_invested = sum(t.cost_usd for t in lead_trades)
+    
+    if lead_total_invested == 0:
+        return None
+    
+    bot_roi = bot_pnl / bot_total_invested if bot_total_invested > 0 else 0
+    lead_roi = lead_pnl / lead_total_invested if lead_total_invested > 0 else 0
+    
+    if lead_roi == 0:
+        return None
+    
+    # Capture ratio = how much of lead's ROI did we get
+    return bot_roi / lead_roi
+```
+
+Capture ratio is computed two ways and both are stored:
+- **Trade-level**: ratio over a rolling 20-trade window (used for suspension triggers)
+- **Period-level**: ratio over a rolling 21-day window (used for shadow promotion)
+
+### Composite score
+
+```python
+def compute_composite_score(wallet):
+    s = 0
+    s += W_LOG_TRADES * math.log10(max(1, wallet.closed_trades_count))
+    s += W_WIN_RATE_VS_CATEGORY_FLOOR * wallet.win_rate_vs_category_floor_score
+    s += W_LOG_PROFIT_FACTOR * math.log10(max(0.1, wallet.profit_factor))
+    s += W_MONTHS_ACTIVE * min(1.0, wallet.months_active / 24)
+    s += W_DOMAIN_SCORE * wallet.domain_score
+    s += W_HOLD_TO_RESOLUTION_PCT * wallet.hold_to_resolution_pct
+    s += W_CONSISTENCY_SCORE * wallet.consistency_score
+    s += W_CONVICTION_SIGNAL * wallet.conviction_signal
+    s += W_COUNTER_TRADE_SIGNAL * wallet.counter_trade_signal  # usually 0
+    s += W_ENTROPY * wallet.entropy_score
+    s += W_INSIDER_PROXIMITY * wallet.insider_proximity_score
+    s += W_MAX_DRAWDOWN * wallet.max_drawdown_pct
+    s += W_CROWDING_PENALTY * wallet.crowding_score
+    
+    # Clamp to [0, 10]
+    return max(0, min(10, s * 10))
+```
+
+### Slippage estimator (paper mode)
+
+```python
+def estimate_slippage(market_volume_24h_usd, trade_size_usd):
+    """Returns slippage as decimal (0.01 = 1%)."""
+    # Base slippage by liquidity tier
+    if market_volume_24h_usd >= 500_000:
+        base = 0.003
+    elif market_volume_24h_usd >= 100_000:
+        base = 0.005
+    elif market_volume_24h_usd >= 50_000:
+        base = 0.010
+    elif market_volume_24h_usd >= 10_000:
+        base = 0.020
+    elif market_volume_24h_usd >= 5_000:
+        base = 0.025
+    else:
+        return None  # filtered out at Filter 3
+    
+    # Size impact: trades > 1% of daily volume add slippage
+    size_pct_of_volume = trade_size_usd / market_volume_24h_usd
+    impact = max(0, (size_pct_of_volume - 0.01) * 2.0)
+    
+    return base + impact
+```
+
+---
+
+## State Machines
+
+### Wallet status transitions
+
+```
+                      ┌─────────────┐
+                      │  candidate  │  Stage A pulls from leaderboard
+                      └──────┬──────┘
+                             │ Stage B: hard disqualifiers
+                  ┌──────────┴──────────┐
+                  │                     │
+                  ▼                     ▼
+            ┌──────────┐         ┌──────────────┐
+            │ shadow   │         │ disqualified │  Permanent unless re-evaluated
+            └────┬─────┘         └──────────────┘
+                 │ Stage E: 21-day validation
+       ┌─────────┴─────────┬─────────────────┐
+       │                   │                 │
+       ▼                   ▼                 ▼
+  ┌────────┐          ┌──────────┐      ┌─────────┐
+  │ active │          │  bench   │      │ dropped │  After 2 failed shadow cycles
+  └───┬────┘          └────┬─────┘      └─────────┘
+      │ Suspension trigger │ Auto-promote when active slot opens
+      │                    │
+      ▼                    │
+  ┌──────────┐             │
+  │suspended │─────────────┘ (after 21-day re-validation in shadow)
+  └────┬─────┘
+       │ 2nd suspension within 60 days
+       ▼
+  ┌─────────┐
+  │ dropped │
+  └─────────┘
+```
+
+Allowed transitions only (anything else = bug):
+- `candidate → shadow` (passes Stage B)
+- `candidate → disqualified` (fails Stage B)
+- `disqualified → candidate` (manual re-evaluation only)
+- `shadow → active` (passes Stage E)
+- `shadow → bench` (passes Stage E but ranked >5)
+- `shadow → dropped` (fails 2 shadow cycles)
+- `active → suspended` (suspension trigger fires)
+- `bench → active` (active slot opens, this wallet is top-ranked bench)
+- `suspended → shadow` (1st suspension, re-validate)
+- `suspended → dropped` (2nd suspension within 60 days)
+- `dropped → candidate` (manual override only, requires 90-day cooldown)
+
+### Position status transitions
+
+```
+       (filter chain pass + order placement)
+        ┌──────────────┐
+        │   pending    │
+        └──────┬───────┘
+               │ Order filled
+               ▼
+        ┌──────────────┐
+        │     open     │◄────┐ Price updates loop (every 30s)
+        └──────┬───────┘     │
+               │             │
+               ├─────────────┘
+               │
+               │ Exit trigger fires
+               ▼
+        ┌──────────────┐
+        │   closing    │  Sell order placed
+        └──────┬───────┘
+               │ Sell filled
+               ▼
+        ┌──────────────┐
+        │    closed    │  Realized P&L recorded
+        └──────────────┘
+
+        OR
+
+        ┌──────────────┐
+        │     open     │
+        └──────┬───────┘
+               │ Market resolves while position open
+               ▼
+        ┌──────────────┐
+        │   resolved   │  Auto-redeem at $1.00 or $0.00
+        └──────────────┘
+```
+
+Each transition writes a row to `position_state_log` for audit.
+
+### Exit reason taxonomy
+
+| Reason | Trigger | Code path |
+|---|---|---|
+| `mirror_full` | Lead sold 100% of their position | `positions/exiter.py::on_lead_sell` |
+| `mirror_partial` | Lead sold X% — bot sells X% | `positions/exiter.py::on_lead_sell` |
+| `resolve_win` | Market resolved, position won | `positions/exiter.py::on_resolve` |
+| `resolve_loss` | Market resolved, position lost | `positions/exiter.py::on_resolve` |
+| `resolve_invalid` | UMA disputed and invalidated | `positions/exiter.py::on_resolve` |
+| `thesis_broken` | -40% AND lead inactive 24h+ | `positions/exiter.py::sanity_check` |
+| `time_stop` | Position open ≥ 90 days | `positions/exiter.py::time_stop_sweep` |
+| `circuit_breaker` | Permanent halt triggered | `risk/circuit_breakers.py::halt` |
+| `manual` | CLI or dashboard force-close | `cli/commands/force_exit.py` |
+
+---
+
+## Error Handling & Resilience
+
+### API failure handling
+
+Every API call wrapped in retry logic with these rules:
+
+| Error type | Retries | Backoff | Action after exhaustion |
+|---|---|---|---|
+| 429 (rate limit) | 5 | Exponential, start 2s, cap 60s | Wait 5 min, then retry |
+| 500/502/503 (server) | 3 | Exponential, start 1s, cap 30s | Log critical, alert Discord |
+| Timeout (>10s) | 2 | Linear, 5s between | Skip this iteration |
+| Connection refused | 5 | Exponential, start 1s, cap 30s | Halt poller for 5 min |
+| 401/403 (auth) | 0 | None | Halt bot, alert URGENT |
+| 4xx other | 0 | None | Log, skip operation |
+
+Rate limit budget tracking — token bucket per endpoint:
+
+```python
+RATE_LIMITS = {
+    "data.leaderboard":    (1000, 10),  # 1000 req / 10s
+    "data.trades":         (200, 10),
+    "data.positions":      (150, 10),
+    "data.activity":       (1000, 10),
+    "gamma.events":        (500, 10),
+    "gamma.markets":       (300, 10),
+    "gamma.general":       (4000, 10),
+    "clob.read":           (1500, 10),
+    "clob.post_order":     (3500, 10),  # burst
+    "clob.post_order_min": (36000, 600), # sustained
+}
+```
+
+When 70% of bucket capacity is consumed, the bot enters CONSERVATIVE mode (slows non-critical polling). At 90%, only execution-critical calls go through.
+
+### Restart-after-crash protocol
+
+On startup the runner executes:
+
+1. **Config validation** — every constant in settings.py has its expected type and range
+2. **DB schema check** — current Alembic revision matches code
+3. **Reconciliation** — for every position marked `open` in DB, query CLOB to verify it actually exists; flag mismatches as `RECONCILE_REQUIRED` and alert
+4. **Pending order recovery** — any `pending` orders older than 5 minutes get cancelled and re-evaluated
+5. **Tier recompute** — recalculate current tier from rolling 7d avg
+6. **Wallet status verification** — for each `active` wallet, verify last shadow_pnl is still positive; demote any that failed during downtime
+7. **Circuit breaker state restore** — if a halt was in effect, restore it with original timer
+
+### What does NOT auto-recover
+
+- **Live mode private key compromise** — halts the bot, requires manual re-auth
+- **Persistent rate-limit lockout** — pages operator after 1 hour of failed retries
+- **DB corruption** — halts bot, requires backup restore
+- **Polymarket API breaking change** — error budget exceeds threshold, halts, alerts
+
+### Notification severity tiers
+
+| Severity | Channel | Examples |
+|---|---|---|
+| INFO | Discord daily digest | Trades executed, tier check, funnel run complete |
+| WARN | Discord ping | Wallet suspended, capture ratio dropped, API slowdown |
+| CRITICAL | Discord ping + ntfy | Circuit breaker fired, order failure final, capture < 30% |
+| URGENT | Discord ping + ntfy + email | Auth failure, DB corruption, KILLSWITCH triggered |
+
+---
+
+## Web Dashboard Specification
+
+A single-page web app on `localhost:8000` (or any port) showing real-time bot state. Built with FastAPI + HTMX + Alpine.js + Tailwind + Plotly.js — no build step, server-rendered.
+
+### Page layout
+
+```
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ┌──────────────┐                                                            ║
+║  │ Polymarket   │   PAPER MODE  •  Tier 0 ($100–$249)  •  All systems green ║
+║  │ Copy Bot     │                                                            ║
+║  └──────────────┘                                                            ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  ┌────────── EQUITY ──────────┐  ┌─────── TIER ──────────────────────────┐  ║
+║  │                            │  │ Current: 0   •   Trade size: $5       │  ║
+║  │    [Plotly equity curve]   │  │ Slots: 6/10   •   Deployed: $28 (28%) │  ║
+║  │                            │  │ ──────────────────────────────────    │  ║
+║  │    $107.42 (+7.4%)         │  │ Next tier @ $250                      │  ║
+║  │    7-day: +$5.20           │  │ Rolling 7d avg: $128                  │  ║
+║  │    All-time: +$7.42        │  │ Days above next: 0/7                  │  ║
+║  └────────────────────────────┘  └────────────────────────────────────────┘  ║
+║                                                                              ║
+║  ┌─────────────────────── ACTIVE WALLETS (4/5) ─────────────────────────┐    ║
+║  │  Wallet      Cat       Score  WR   Capture  Bot P&L   Last Trade    │    ║
+║  │  RN1         soccer    8.4    67%  82%      +$4.30    2h ago        │    ║
+║  │  Domer       politics  7.9    62%  74%      +$2.10    14m ago       │    ║
+║  │  ColdMath    weather   7.7    71%  88%      +$1.02    1d ago        │    ║
+║  │  SwissTony   soccer    7.2    58%  56%      -$0.40    3h ago [WATCH]│    ║
+║  └─────────────────────────────────────────────────────────────────────┘    ║
+║                                                                              ║
+║  ┌────── OPEN POSITIONS (6) ──────┐  ┌────── LIVE SIGNAL FEED ─────────┐    ║
+║  │  Mkt          Side  Size  P&L  │  │ 14:32 RN1 BUY Arsenal $5.00 ✓  │    ║
+║  │  Arsenal-Spurs YES  $5   +0.2 │  │ 14:31 Domer SELL Spurs (skip)  │    ║
+║  │  Fed-rate-cut  YES  $5   -0.1 │  │ 14:28 ColdMath BUY temp (skip: │    ║
+║  │  NBA-final     NO   $5   +0.0 │  │       liquidity <$5k)          │    ║
+║  │  ...                          │  │ 14:25 SwissTony BUY Bayern $5 ✓│    ║
+║  └────────────────────────────────┘  └─────────────────────────────────┘    ║
+║                                                                              ║
+║  ┌─────────── FUNNEL STATUS ──────┐  ┌──── CIRCUIT BREAKERS ──────────┐     ║
+║  │ Candidates: 200                │  │ Daily P&L:   -2% / -15% ✓     │     ║
+║  │ Scored:     23                 │  │ Weekly P&L:  +6% / -25% ✓     │     ║
+║  │ Shadow:     14/25              │  │ Max DD:      4% / 40% ✓       │     ║
+║  │ Active:     4/5                │  │ Killswitch:  off              │     ║
+║  └────────────────────────────────┘  └────────────────────────────────┘     ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  [Equity] [Wallets] [Positions] [Signals] [Funnel] [Settings] [Logs]         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+```
+
+### Pages in detail
+
+**1. Overview (default landing)**
+- Top bar: mode badge (PAPER/LIVE), tier, system health dot
+- Equity card: Plotly chart with 1d/7d/30d/all toggle; current value + delta
+- Tier card: current tier, trade size, slots, deployment %, progress to next tier
+- Active wallets table: live capture ratio per wallet, color-coded
+- Open positions: market name, side, entry/current price, P&L
+- Live signal feed: streaming WebSocket updates of incoming signals + filter outcomes
+- Funnel status: candidate → scored → shadow → active counts
+- Circuit breakers: each breaker with current value vs threshold, green/yellow/red
+
+**2. Wallets page**
+- Tabs: Active (5) / Shadow (25) / Bench / Candidates / Disqualified / Suspended / Dropped
+- For each wallet, full metric breakdown: composite score, all 13 sub-scores, category, win rate, profit factor, max DD, capture ratio (rolling 20 + period 21d), cluster size, suspension history
+- Click into wallet → modal with: equity curve of that wallet, last 50 trades, all bot copies of that wallet with P&L
+- Action buttons: force-suspend, force-promote (with warning), add manual note
+
+**3. Positions page**
+- Tabs: Open / Closed (last 7d) / Resolved (last 7d) / All
+- For each open position: market, side, entry, current, P&L $, P&L %, lead wallet, time held, distance to resolution
+- For closed: exit reason badge, realized P&L
+- Action buttons: force-exit individual position, force-exit all (requires typed confirmation)
+- Filter by wallet, by market category, by date range
+
+**4. Signals page**
+- Tab: Live feed (default) — streaming via WebSocket
+- Tab: History — searchable log of every signal, filter outcome shown per signal
+- Each signal row: timestamp, wallet, market, side, lead size, bot decision (executed / skipped:reason), if executed → fill details
+- Aggregate stats at top: signals/day, execution rate, skip reasons breakdown (pie chart)
+
+**5. Funnel page**
+- Visual pipeline: 200 candidates → disqualifiers (with breakdown of which DQs are firing most) → scored → shadow pool → active
+- For each disqualifier, show count of wallets currently failing it
+- Shadow pool detail: each shadow wallet with simulated P&L curve, capture ratio, days until promotion eligible
+- Manual "Force re-run funnel" button (cooldown 1h)
+
+**6. Settings page**
+- View current config (read-only display of settings.py values, grouped)
+- Editable: tier override (dropdown 0-9 or auto), killswitch (toggle), Discord webhook URL test, ntfy topic test
+- Mode toggle: Paper ↔ Live (requires typed confirmation + private key re-auth in live)
+- Backup: download current DB snapshot
+
+**7. Logs page**
+- Last 1000 log entries, structured JSON parsed into table
+- Filter by severity (INFO/WARN/CRITICAL/URGENT) and component (poller/funnel/exec/risk/etc.)
+- Search bar with regex support
+- Export to CSV
+
+### Real-time updates
+
+- WebSocket connection from dashboard to `/ws` endpoint
+- Backend pushes events: `signal.detected`, `position.opened`, `position.closed`, `wallet.promoted`, `tier.changed`, `breaker.fired`, `health.degraded`
+- Frontend uses HTMX SSE or raw WebSocket; Alpine.js handles small DOM updates
+
+### Dashboard auth
+
+- Default: localhost-only, no auth (firewall handles it)
+- Optional: basic auth via env var `DASHBOARD_USER` + `DASHBOARD_PASS` if exposed beyond localhost
+- HTTPS optional via Caddy reverse proxy
+
+### Mobile
+
+- Tailwind responsive — collapses to single column on phones
+- Critical info (equity, tier, breakers) visible without scroll
+- Tap-friendly buttons
+
+---
+
+## CLI Reference
+
+The CLI is the operator's primary control surface when the dashboard isn't available. All commands are read-only by default; mutating commands require `--confirm`.
+
+```
+$ polymarket-bot --help
+
+Usage: polymarket-bot COMMAND [OPTIONS]
+
+Commands:
+  status              Show current bot state (one-screen summary)
+  start               Start the runner (foreground)
+  stop                Stop gracefully (waits for in-flight orders)
+  
+  wallets list        List wallets by status (--status=active/shadow/etc.)
+  wallets show ADDR   Show full wallet metrics
+  wallets suspend ADDR --confirm
+  wallets promote ADDR --confirm
+  
+  positions list      List open positions
+  positions show ID   Show position details + lead trade chain
+  positions exit ID --confirm
+  positions exit-all --confirm
+  
+  tier show           Current tier + progression
+  tier set N --confirm
+  tier auto --confirm
+  
+  funnel run --confirm        Force funnel re-run now
+  funnel show                 Current funnel state
+  
+  killswitch on --confirm     Halt all new entries
+  killswitch off --confirm
+  
+  backtest run --start=DATE --end=DATE --wallets=N
+  backtest results LATEST
+  
+  db backup PATH
+  db restore PATH --confirm
+  db migrate                  Run Alembic migrations
+  
+  config show                 Print current config
+  config validate             Verify all settings are valid
+```
+
+### Common workflows
+
+```bash
+# Morning check
+polymarket-bot status
+
+# Investigate a underperforming wallet
+polymarket-bot wallets show 0xRN1...
+
+# Manually force-suspend a wallet you don't trust
+polymarket-bot wallets suspend 0xABC... --confirm
+
+# Emergency halt
+polymarket-bot killswitch on --confirm
+
+# Run a backtest of last 90 days
+polymarket-bot backtest run --start=2026-02-20 --end=2026-05-20
+
+# Backup before changes
+polymarket-bot db backup /home/jackson/backups/bot-$(date +%F).db
+```
+
+---
+
+## Backtesting Harness
+
+Located at `scripts/backtest.py`. Replays historical Polymarket data through the full funnel and execution logic.
+
+### Inputs
+- Date range (start, end)
+- Initial bankroll (default $100)
+- Optional: override config values for sensitivity testing
+
+### Process
+1. Snapshot leaderboard as of `start_date`
+2. Run Stage B–D against snapshot
+3. Simulate shadow mode for 21 days starting `start_date`
+4. Promote wallets per shadow rules
+5. From `start_date + 21 days` to `end_date`: walk forward day-by-day
+6. For each historical trade by active wallets: run 5-filter chain (with historical market data) → simulate fill → track position lifecycle
+7. Apply realistic latency (random 1–18 second delay → fill at the price 2 seconds after detection)
+8. Resolve positions on actual historical resolution outcomes
+9. Output: full equity curve, per-wallet capture ratio, signal-to-exec ratio, max drawdown, ending bankroll
+
+### Outputs
+- `backtest_YYYY-MM-DD_to_YYYY-MM-DD.csv` — every simulated trade
+- `backtest_summary.json` — aggregate metrics
+- `backtest_equity_curve.png` — chart
+- Console table with key stats
+
+### Walk-forward analysis (avoid look-ahead bias)
+- Wallet selection at time `t` uses ONLY data available at `t-1`
+- Never use future P&L to select wallets
+- Cross-validate: train on first 60 days, test on next 30, slide window
+
+### Limitations honest
+- Backtest assumes historical book depth was as deep as 24h volume suggests — overoptimistic in thin markets
+- Backtest cannot perfectly recreate latency (mempool conditions vary)
+- Backtest assumes APIs were as reliable historically as today — false during major events
+
+---
+
+## Testing Strategy
+
+### Unit tests (pytest, all pure functions)
+
+```
+tests/unit/
+├── test_filters.py          # Each of 5 filters with edge cases
+├── test_sizer.py            # Tier ladder math, promotion/demotion
+├── test_scoring.py          # Composite score, each sub-metric
+├── test_capture_ratio.py    # ROI normalization edge cases
+├── test_consistency.py      # CV calculation with various distributions
+├── test_conviction.py       # Median-based, outlier resistance
+├── test_crowding.py         # Score composition
+├── test_slippage.py         # All 6 liquidity tiers, impact addition
+├── test_clustering.py       # DIY funder heuristic
+├── test_tier_manager.py     # All transition guardrails
+└── test_state_machines.py   # Wallet status, position status transitions
+```
+
+### Integration tests (mocked APIs via respx)
+
+```
+tests/integration/
+├── test_funnel_pipeline.py    # Full Stage A → F with fixture data
+├── test_order_engine.py       # 3-phase retry against mocked CLOB
+├── test_exiter.py             # All exit reasons against mocked feeds
+├── test_poller.py             # 15s loop with simulated API responses
+├── test_reconciliation.py     # Startup with stale DB state
+└── test_circuit_breakers.py   # Trigger each breaker, verify halt
+```
+
+### Fixture data
+- Real captured API responses anonymized into `tests/fixtures/`
+- Includes: leaderboard (full top 200), wallet activities, market metadata, order books, edge cases (Théo cluster wallet, HFT bot wallet, dormant wallet, perfect-record wallet)
+
+### Coverage target
+- Unit: 90%+
+- Integration: critical paths only (funnel, order placement, exits) — 100% on these
+
+### CI
+- GitHub Actions: lint (ruff) + type check (mypy) + tests on push
+- Don't deploy if any of these fail
+
+---
+
+## Deployment
+
+### Local development
+```bash
+git clone <repo> polymarket-bot
+cd polymarket-bot
+uv sync
+cp .env.example .env       # Fill in
+uv run alembic upgrade head
+uv run polymarket-bot start
+# Dashboard at http://localhost:8000
+```
+
+### Production (VPS — Hetzner CCX12 ~$4.50/mo recommended)
+
+**Option 1: systemd (recommended for simplicity)**
+
+```ini
+# /etc/systemd/system/polymarket-bot.service
+[Unit]
+Description=Polymarket Copy Bot
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=botuser
+WorkingDirectory=/home/botuser/polymarket-bot
+EnvironmentFile=/home/botuser/polymarket-bot/.env
+ExecStart=/home/botuser/.local/bin/uv run polymarket-bot start
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/var/log/polymarket-bot/stdout.log
+StandardError=append:/var/log/polymarket-bot/stderr.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Option 2: Docker Compose (recommended for portability)**
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  bot:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    depends_on: [db]
+    ports: ["8000:8000"]
+    volumes: ["./logs:/app/logs"]
+  
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: bot
+      POSTGRES_DB: polymarket_bot
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    restart: unless-stopped
+
+  caddy:    # Optional HTTPS reverse proxy
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile"]
+
+volumes:
+  pgdata:
+secrets:
+  db_password:
+    file: ./.secrets/db_password
+```
+
+### Secrets management
+- **Never** commit `.env` or private keys
+- Live mode: use `keyring` (macOS) or `pass` (Linux) for the private key — `.env` only holds a reference to the keychain entry
+- API keys (Discord webhook, Polymarket L2): `.env` is fine, but `chmod 600`
+- Backup the keychain entries to encrypted USB
+
+### Backup strategy
+- DB backup: nightly cron, `pg_dump` to `/backups/` with 30-day retention
+- Off-site: rsync to a second VPS or B2 bucket
+- Config + scripts: git repo (private)
+- Recovery test: monthly — actually restore to a staging VM
+
+---
+
+## Health Check & Monitoring
+
+### `/health` endpoint
+Returns 200 with JSON body if all of:
+- DB reachable
+- Last poller iteration < 30s ago
+- Last funnel run < 25h ago
+- No active CRITICAL alerts
+- Polymarket API reachable
+
+Otherwise 503 with details.
+
+### Prometheus metrics
+Exposed at `/metrics`:
+- `bot_equity_usd` (gauge)
+- `bot_open_positions` (gauge)
+- `bot_current_tier` (gauge)
+- `bot_active_wallets` (gauge)
+- `bot_shadow_wallets` (gauge)
+- `bot_signals_total` (counter, label: outcome)
+- `bot_orders_placed_total` (counter, label: phase)
+- `bot_order_failures_total` (counter, label: reason)
+- `bot_capture_ratio_per_wallet` (gauge, label: wallet)
+- `bot_api_calls_total` (counter, label: endpoint)
+- `bot_api_rate_limit_utilization` (gauge, label: endpoint)
+- `bot_circuit_breaker_state` (gauge)
+- `bot_uptime_seconds` (gauge)
+
+### Grafana dashboard
+Pre-built JSON in `grafana/dashboard.json`. Panels:
+- Equity curve
+- Per-wallet capture ratio over time
+- API rate limit utilization heatmap
+- Signal-to-execution ratio rolling 24h
+- Funnel pipeline counts over time
+
+---
+
+## Configuration Validation
+
+On startup, `config/validators.py` runs:
+
+```python
+def validate_config():
+    """Verifies every config value is sensible. Crashes hard on failure."""
+    assert 0 < PAPER_INITIAL_BALANCE <= 1_000_000
+    assert TIER_TABLE[0]["min_bankroll"] <= PAPER_INITIAL_BALANCE
+    assert all(t1["min_bankroll"] < t2["min_bankroll"] 
+               for t1, t2 in zip(TIER_TABLE, TIER_TABLE[1:]))
+    
+    assert 0 < SHADOW_MODE_MIN_DAYS <= 90
+    assert 0 < SHADOW_POOL_SIZE <= 100
+    assert 0 < ACTIVE_POOL_SIZE <= SHADOW_POOL_SIZE
+    assert 0 < SHADOW_MIN_CAPTURE_RATIO <= 1.0
+    
+    # Disqualifier sanity
+    assert 0 < DQ_MIN_WIN_RATE < 1.0
+    assert 0 < DQ_MIN_CLOSED_TRADES
+    assert 0 < DQ_MAX_DRAWDOWN_PCT < 1.0
+    
+    # Scoring weights — positive factors should sum to roughly 1.0–1.5
+    positive_weights = [W_LOG_TRADES, W_WIN_RATE_VS_CATEGORY_FLOOR, 
+                        W_LOG_PROFIT_FACTOR, W_MONTHS_ACTIVE, W_DOMAIN_SCORE,
+                        W_HOLD_TO_RESOLUTION_PCT, W_CONSISTENCY_SCORE,
+                        W_CONVICTION_SIGNAL]
+    assert 0.8 <= sum(positive_weights) <= 1.5
+    
+    # Negative weights should sum to small negative
+    negative_weights = [W_ENTROPY, W_INSIDER_PROXIMITY, W_MAX_DRAWDOWN, W_CROWDING_PENALTY]
+    assert -0.5 <= sum(negative_weights) <= 0
+    
+    # Category floors must be in [0.5, 0.9]
+    for cat, floor in CATEGORY_WIN_RATE_FLOORS.items():
+        assert 0.5 <= floor <= 0.9, f"Category floor for {cat} out of range"
+    
+    # Execution
+    assert 0 < MAX_BUY_SLIPPAGE_PCT < 0.3
+    assert 0 < MAX_SELL_SLIPPAGE_PCT < 0.3
+    assert MIN_PRICE < MAX_PRICE
+    assert MIN_HOURS_TO_RESOLUTION < MAX_HOURS_TO_RESOLUTION
+    
+    # Mode-specific
+    if TRADING_MODE == "LIVE":
+        assert os.getenv("POLYMARKET_PRIVATE_KEY")
+        assert os.getenv("POLYMARKET_API_KEY")
+        # ... etc
+```
+
+If any assertion fails, bot does NOT start. Error message is verbose and tells you exactly which value to fix.
+
+---
+
+## Time Handling
+
+**Everything in UTC. Always.** No exceptions.
+
+- DB timestamps: `TIMESTAMPTZ` columns, always UTC
+- Display in dashboard: convert to user's local timezone client-side (JS)
+- Cron-like schedules: defined in UTC (e.g., funnel runs at 12:00 UTC)
+- Log timestamps: ISO 8601 with `Z` suffix
+
+`core/clock.py` provides a single `now()` function — never use `datetime.now()` directly. This makes tests deterministic (can mock the clock).
+
+---
+
+## Data Retention
+
+| Table | Retention | Reason |
+|---|---|---|
+| `wallets` | Forever | Need full history for rescoring |
+| `signals` | 90 days hot, archived after | Volume gets large |
+| `positions` | Forever | Audit trail |
+| `equity_snapshots` | Forever (downsampled after 30d) | Long-term chart |
+| `position_state_log` | 1 year | Audit |
+| `api_call_log` | 7 days | Debug only |
+| `notification_log` | 30 days | Dedup reference |
+
+Archival: nightly job moves rows older than retention to `archive/` parquet files. Read access still possible via separate query.
+
+---
+
+
+
+---
+
+## Quick Reference: v1 → v2.3 Diff
+
+| Component | v1 | v2.1 | v2.2 | v2.3 |
+|---|---|---|---|---|
+| Watchlist source | Top 20 score | Funnel 200→20→5 | Funnel 200→25→5 + clusters | Same |
+| Hard disqualifiers | None | 11 | 13 | 13 (unchanged) |
+| Category WR floors | No | No | Yes | Yes (unchanged) |
+| Scoring factors | 9 | 9 | 13 | 13 (unchanged) |
+| Cluster detection | No | No | PolyTrack | **PolyTrack + DIY funder heuristic fallback** |
+| Capture ratio | No | Implicit | ≥60% promote | Same + **exact formula spec'd** |
+| Shadow validation | None | 14d | 21d | 21d (unchanged) |
+| Exact metric formulas | No | No | No | **YES — all 12 formulas** |
+| State machines | Implicit | Implicit | Implicit | **Explicit — all wallet + position transitions** |
+| Error handling | Vague | Vague | Vague | **Per-error-type retry/backoff matrix + rate budget** |
+| Web dashboard | No | No | No | **Full FastAPI + HTMX 7-page spec** |
+| CLI | No | No | No | **Full command reference** |
+| Tech stack | Implicit | Implicit | Partial | **Fully locked: Python/asyncio/Postgres/FastAPI/HTMX** |
+| Project structure | No | No | No | **Full directory tree** |
+| Backtesting | No | No | Mentioned | **Full walk-forward harness spec** |
+| Testing | No | No | No | **Unit + integration + fixtures strategy** |
+| Deployment | No | No | No | **systemd + Docker Compose** |
+| Health/monitoring | Partial | Partial | Partial | **`/health` + Prometheus metrics + Grafana** |
+| Config validation | No | No | No | **Startup `validate_config()` with all assertions** |
+| Time handling | Implicit | Implicit | Implicit | **UTC everywhere, mockable `clock.py`** |
+| Data retention | No | No | No | **Per-table retention + archival policy** |
+| Execution filters | 11 | 5 | 5 | 5 (unchanged) |
+| Min lead trade | $100 | $5 | $5 | $5 (unchanged) |
+| Stop-loss | 20% | None | None | None (unchanged) |
+| Position sizing | Fixed $5–10 | Fixed $5–10 | 10-tier ladder | 10-tier ladder (unchanged) |
+| Bot copies HFT | Yes | No | No | No (unchanged) |
 
 ---
 

@@ -1,0 +1,20 @@
+[
+  {
+    "proxyWalletAddress": "0xabc123abc123abc123abc123abc123abc123abc1",
+    "name": "TestWallet1",
+    "pnl": 12543.20,
+    "volume": 145000.00,
+    "positionsValue": 8200.00,
+    "winRate": 0.65,
+    "tradesCount": 387
+  },
+  {
+    "proxyWalletAddress": "0xdef456def456def456def456def456def456def4",
+    "name": "TestWallet2",
+    "pnl": 4210.50,
+    "volume": 67000.00,
+    "positionsValue": 1100.00,
+    "winRate": 0.58,
+    "tradesCount": 145
+  }
+]
