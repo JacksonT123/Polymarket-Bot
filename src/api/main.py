@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 import structlog
 import os
 
-from src.api.routes import health, equity, wallets, positions, signals, funnel, config_routes
+from src.api.routes import health, equity, wallets, positions, signals, funnel, config_routes, market_data
 from src.api.websocket import ws_endpoint
 
 log = structlog.get_logger(__name__)
@@ -33,6 +33,7 @@ app.include_router(positions.router, prefix="/api")
 app.include_router(signals.router, prefix="/api")
 app.include_router(funnel.router, prefix="/api")
 app.include_router(config_routes.router, prefix="/api")
+app.include_router(market_data.router)
 
 # WebSocket
 app.add_api_websocket_route("/ws", ws_endpoint)
