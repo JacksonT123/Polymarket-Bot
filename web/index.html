@@ -3,218 +3,482 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Polymarket Copy Bot</title>
-  <!-- CDN: Tailwind, Alpine.js, HTMX, Plotly -->
+  <title>Polymarket Bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
+    :root {
+      --bg:       #080c14;
+      --surface:  #0d1117;
+      --card:     #111827;
+      --border:   #1f2937;
+      --border2:  #374151;
+      --text:     #f1f5f9;
+      --muted:    #6b7280;
+      --muted2:   #9ca3af;
+      --cyan:     #22d3ee;
+      --cyan-dim: rgba(34,211,238,0.12);
+      --green:    #4ade80;
+      --green-dim:rgba(74,222,128,0.12);
+      --red:      #f87171;
+      --red-dim:  rgba(248,113,113,0.12);
+      --amber:    #fbbf24;
+      --amber-dim:rgba(251,191,36,0.12);
+      --purple:   #a78bfa;
+    }
+    * { box-sizing: border-box; }
     [x-cloak] { display: none !important; }
-    body { background: #0f172a; color: #e2e8f0; font-family: 'Inter', sans-serif; }
-    .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1rem; }
-    .tab-active { border-bottom: 2px solid #38bdf8; color: #38bdf8; }
-    .badge-green { background: #166534; color: #4ade80; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; }
-    .badge-red   { background: #7f1d1d; color: #f87171; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; }
-    .badge-yellow{ background: #78350f; color: #fbbf24; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; }
-    .pnl-pos { color: #4ade80; }
-    .pnl-neg { color: #f87171; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Scrollbar ─────────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+    /* ── Cards ─────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+    }
+    .card-glow {
+      box-shadow: 0 0 0 1px var(--border), 0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    /* ── Stat cards ─────────────────────────────── */
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem 1.25rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent, var(--cyan)), transparent);
+      opacity: 0.7;
+    }
+    .stat-card.green  { --accent: var(--green); }
+    .stat-card.red    { --accent: var(--red); }
+    .stat-card.amber  { --accent: var(--amber); }
+    .stat-card.purple { --accent: var(--purple); }
+
+    /* ── Header ─────────────────────────────────── */
+    .header-bar {
+      background: rgba(13,17,23,0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    /* ── Nav ────────────────────────────────────── */
+    .nav-tab {
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+      border: 1px solid transparent;
+    }
+    .nav-tab:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+    .nav-tab.active {
+      color: var(--cyan);
+      background: var(--cyan-dim);
+      border-color: rgba(34,211,238,0.2);
+    }
+
+    /* ── Tables ─────────────────────────────────── */
+    .data-table { width: 100%; border-collapse: collapse; }
+    .data-table th {
+      text-align: left;
+      padding: 0.4rem 0.75rem;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .data-table th.right { text-align: right; }
+    .data-table td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid rgba(31,41,55,0.6);
+      color: var(--text);
+    }
+    .data-table td.right { text-align: right; }
+    .data-table td.mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+    .data-table td.muted { color: var(--muted2); font-size: 12px; }
+    .data-table tbody tr { transition: background 0.1s; }
+    .data-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+    .data-table tbody tr:last-child td { border-bottom: none; }
+
+    /* ── Badges ─────────────────────────────────── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .badge-green  { background: var(--green-dim);  color: var(--green);  border: 1px solid rgba(74,222,128,0.2); }
+    .badge-red    { background: var(--red-dim);    color: var(--red);    border: 1px solid rgba(248,113,113,0.2); }
+    .badge-amber  { background: var(--amber-dim);  color: var(--amber);  border: 1px solid rgba(251,191,36,0.2); }
+    .badge-cyan   { background: var(--cyan-dim);   color: var(--cyan);   border: 1px solid rgba(34,211,238,0.2); }
+    .badge-purple { background: rgba(167,139,250,0.12); color: var(--purple); border: 1px solid rgba(167,139,250,0.2); }
+
+    /* ── PnL ─────────────────────────────────────── */
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+
+    /* ── Live dot ────────────────────────────────── */
+    .live-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    /* ── Signal feed row ─────────────────────────── */
+    .feed-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.45rem 0;
+      border-bottom: 1px solid rgba(31,41,55,0.5);
+      font-size: 12px;
+      animation: slide-in 0.2s ease;
+    }
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .feed-row:last-child { border-bottom: none; }
+
+    /* ── Funnel bar ──────────────────────────────── */
+    .funnel-row { padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+    .funnel-row:last-child { border-bottom: none; }
+    .funnel-bar-bg { background: rgba(255,255,255,0.05); border-radius: 3px; height: 4px; margin-top: 5px; }
+    .funnel-bar-fill { height: 4px; border-radius: 3px; background: var(--cyan); transition: width 0.5s ease; }
+
+    /* ── Section header ──────────────────────────── */
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted2);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 0.85rem;
+    }
+
+    /* ── Button ──────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      padding: 0.45rem 1rem;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      border: 1px solid transparent;
+    }
+    .btn-primary {
+      background: var(--cyan-dim);
+      color: var(--cyan);
+      border-color: rgba(34,211,238,0.25);
+    }
+    .btn-primary:hover { background: rgba(34,211,238,0.2); }
+    .btn-ghost { background: transparent; color: var(--muted2); border-color: var(--border2); }
+    .btn-ghost:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+
+    /* ── Select ──────────────────────────────────── */
+    select {
+      background: var(--card);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 0.3rem 0.6rem;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    /* ── Equity window buttons ───────────────────── */
+    .win-btn { padding: 2px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; color: var(--muted); transition: all 0.1s; }
+    .win-btn:hover { color: var(--text); }
+    .win-btn.active { background: var(--cyan-dim); color: var(--cyan); }
+
+    /* ── Empty state ─────────────────────────────── */
+    .empty { text-align: center; padding: 2.5rem; color: var(--muted); font-size: 13px; }
+
+    /* ── Divider ─────────────────────────────────── */
+    .divider { border: none; border-top: 1px solid var(--border); margin: 0; }
   </style>
 </head>
-<body class="min-h-screen">
+<body>
 
-  <!-- Header -->
-  <header class="border-b border-slate-700 px-6 py-3 flex items-center justify-between">
+  <!-- ═══════════════════ HEADER ═══════════════════ -->
+  <header class="header-bar px-5 py-3 flex items-center justify-between gap-4">
     <div class="flex items-center gap-3">
-      <div class="text-lg font-bold text-sky-400">Polymarket Copy Bot</div>
-      <span x-text="mode" class="text-xs badge-yellow ml-2"></span>
+      <!-- Logo -->
+      <div style="background:linear-gradient(135deg,#22d3ee,#a78bfa);border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#080c14;flex-shrink:0;">P</div>
+      <div>
+        <div style="font-weight:700;font-size:15px;letter-spacing:-0.01em;">Polymarket Bot</div>
+        <div style="font-size:11px;color:var(--muted);">Copy Trading Terminal</div>
+      </div>
     </div>
-    <div class="text-sm text-slate-400 flex items-center gap-4">
-      <span>Tier <strong x-text="tier" class="text-white"></strong></span>
-      <span x-bind:class="allClear ? 'text-green-400' : 'text-red-400'">
-        ● <span x-text="allClear ? 'All systems green' : 'ALERT'"></span>
-      </span>
-      <span class="text-slate-500" x-text="lastUpdate"></span>
+
+    <!-- Status pills -->
+    <div class="flex items-center gap-3">
+      <span class="badge badge-amber" x-text="mode"></span>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--card);border:1px solid var(--border);border-radius:6px;font-size:12px;">
+        <div class="live-dot" x-show="wsConnected"></div>
+        <div style="width:7px;height:7px;border-radius:50%;background:var(--red);flex-shrink:0;" x-show="!wsConnected"></div>
+        <span x-text="wsConnected ? 'Live' : 'Offline'" :style="wsConnected ? 'color:var(--green)' : 'color:var(--red)'"></span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);" x-text="lastUpdate"></div>
     </div>
   </header>
 
-  <!-- Nav Tabs -->
-  <nav class="flex border-b border-slate-700 px-6 text-sm">
+  <!-- ═══════════════════ NAV ════════════════════ -->
+  <nav style="background:var(--surface);border-bottom:1px solid var(--border);padding:0.5rem 1.25rem;display:flex;gap:0.25rem;overflow-x:auto;">
     <template x-for="tab in tabs" :key="tab.id">
       <button
         @click="activeTab = tab.id"
-        :class="activeTab === tab.id ? 'tab-active' : 'text-slate-400 hover:text-white'"
-        class="px-4 py-3 font-medium transition-colors"
+        :class="activeTab === tab.id ? 'nav-tab active' : 'nav-tab'"
         x-text="tab.label"
       ></button>
     </template>
   </nav>
 
-  <!-- Main content -->
-  <main class="p-6 grid gap-4">
+  <!-- ═══════════════════ CONTENT ═══════════════════ -->
+  <main style="padding:1.25rem;max-width:1600px;margin:0 auto;">
 
-    <!-- ── Overview ── -->
+    <!-- ── OVERVIEW ─────────────────────────────── -->
     <div x-show="activeTab === 'overview'" x-cloak>
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-        <!-- Equity chart -->
-        <div class="card lg:col-span-2">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="font-semibold text-white">Equity</h2>
-            <div class="flex gap-2 text-xs">
+      <!-- KPI Row -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:0.75rem;" class="kpi-grid">
+
+        <div class="stat-card green">
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;">Total Equity</div>
+          <div style="font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text);" x-text="'$' + (equity.total_equity || 0).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})"></div>
+          <div style="margin-top:0.35rem;font-size:12px;" :class="(equity.daily_pnl||0)>=0?'pos':'neg'">
+            <span x-text="((equity.daily_pnl||0)>=0?'+':'')+' $'+(equity.daily_pnl||0).toFixed(2)+' today'"></span>
+          </div>
+        </div>
+
+        <div class="stat-card" :class="(equity.all_time_pnl||0)>=0?'green':'red'">
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;">All-Time P&L</div>
+          <div style="font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;" :class="(equity.all_time_pnl||0)>=0?'pos':'neg'" x-text="((equity.all_time_pnl||0)>=0?'+':'')+' $'+(equity.all_time_pnl||0).toFixed(2)"></div>
+          <div style="margin-top:0.35rem;font-size:12px;color:var(--muted);">
+            <span x-text="'Cash: $'+(equity.cash_balance||0).toFixed(0)"></span>
+          </div>
+        </div>
+
+        <div class="stat-card cyan">
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;">Open Positions</div>
+          <div style="font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--cyan);" x-text="openPositions.length"></div>
+          <div style="margin-top:0.35rem;font-size:12px;color:var(--muted);">
+            <span x-text="'Deployed: $'+(equity.deployed_usd||0).toFixed(0)"></span>
+          </div>
+        </div>
+
+        <div class="stat-card purple">
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem;">Wallets</div>
+          <div style="font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--purple);">
+            <span x-text="activeWallets.length"></span>
+            <span style="font-size:14px;color:var(--muted);font-weight:400;"> active</span>
+          </div>
+          <div style="margin-top:0.35rem;font-size:12px;color:var(--muted);">
+            <span x-text="shadowWallets.length+' in shadow pool'"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Equity chart + tier -->
+      <div style="display:grid;grid-template-columns:1fr 280px;gap:0.75rem;margin-bottom:0.75rem;" class="chart-grid">
+
+        <div class="card card-glow">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+            <div class="section-title" style="margin-bottom:0;">Equity Curve</div>
+            <div style="display:flex;gap:4px;">
               <template x-for="w in ['1d','7d','30d','all']" :key="w">
-                <button @click="loadEquityChart(w)"
-                  :class="equityWindow === w ? 'text-sky-400 font-bold' : 'text-slate-400'"
-                  x-text="w"></button>
+                <button @click="loadEquityChart(w)" :class="equityWindow===w?'win-btn active':'win-btn'" x-text="w"></button>
               </template>
             </div>
           </div>
-          <div id="equity-chart" style="height:200px;"></div>
-          <div class="flex gap-6 mt-3 text-sm">
-            <div><span class="text-slate-400">Total equity</span> <strong x-text="'$' + (equity.total_equity || 0).toFixed(2)"></strong></div>
-            <div><span class="text-slate-400">Daily P&L</span>
-              <strong :class="(equity.daily_pnl || 0) >= 0 ? 'pnl-pos' : 'pnl-neg'" x-text="'$' + (equity.daily_pnl || 0).toFixed(2)"></strong>
-            </div>
-            <div><span class="text-slate-400">All-time</span>
-              <strong :class="(equity.all_time_pnl || 0) >= 0 ? 'pnl-pos' : 'pnl-neg'" x-text="'$' + (equity.all_time_pnl || 0).toFixed(2)"></strong>
-            </div>
-          </div>
+          <div id="equity-chart" style="height:190px;"></div>
         </div>
 
-        <!-- Tier card -->
         <div class="card">
-          <h2 class="font-semibold text-white mb-3">Tier</h2>
-          <div class="text-4xl font-bold text-sky-400 mb-1" x-text="tier"></div>
-          <div class="text-sm text-slate-400 mb-3">Trade size: <strong x-text="tradeSize"></strong></div>
-          <div class="grid grid-cols-2 gap-2 text-sm">
-            <div><span class="text-slate-400">Slots</span> <span x-text="slots"></span></div>
-            <div><span class="text-slate-400">Deployed</span> <span x-text="deployed"></span></div>
-            <div><span class="text-slate-400">Cash</span> <span x-text="'$' + (equity.cash_balance || 0).toFixed(0)"></span></div>
-            <div><span class="text-slate-400">Positions</span> <span x-text="equity.open_position_count || 0"></span></div>
+          <div class="section-title">Tier Status</div>
+          <div style="text-align:center;padding:0.5rem 0 1rem;">
+            <div style="font-size:48px;font-weight:800;color:var(--cyan);line-height:1;font-family:'JetBrains Mono',monospace;" x-text="tier"></div>
+            <div style="color:var(--muted);font-size:12px;margin-top:4px;">Current Tier</div>
+          </div>
+          <hr class="divider" style="margin-bottom:0.75rem;">
+          <div style="display:flex;flex-direction:column;gap:0.5rem;">
+            <div style="display:flex;justify-content:space-between;font-size:13px;">
+              <span style="color:var(--muted);">Trade Size</span>
+              <span style="font-family:'JetBrains Mono',monospace;color:var(--green);" x-text="tradeSize"></span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;">
+              <span style="color:var(--muted);">Slots Used</span>
+              <span style="font-family:'JetBrains Mono',monospace;" x-text="slots"></span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;">
+              <span style="color:var(--muted);">Mode</span>
+              <span class="badge badge-amber" x-text="mode"></span>
+            </div>
+          </div>
+          <hr class="divider" style="margin-top:0.75rem;margin-bottom:0.75rem;">
+          <!-- Circuit breakers -->
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:0.5rem;">Breakers</div>
+          <div style="display:flex;flex-direction:column;gap:0.3rem;font-size:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="color:var(--muted);">Daily P&L</span>
+              <span class="badge badge-green">OK</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="color:var(--muted);">Weekly</span>
+              <span class="badge badge-green">OK</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="color:var(--muted);">Killswitch</span>
+              <span :class="metrics.killswitch_active ? 'badge badge-red' : 'badge badge-green'" x-text="metrics.killswitch_active ? 'ACTIVE' : 'OFF'"></span>
+            </div>
           </div>
         </div>
-
       </div>
 
-      <!-- Active wallets -->
-      <div class="card mt-4">
-        <h2 class="font-semibold text-white mb-3">Active Wallets (<span x-text="activeWallets.length"></span>)</h2>
-        <table class="w-full text-sm">
-          <thead class="text-slate-400 text-xs">
-            <tr>
-              <th class="text-left py-1">Wallet</th>
-              <th class="text-left py-1">Category</th>
-              <th class="text-right py-1">Score</th>
-              <th class="text-right py-1">Win Rate</th>
-              <th class="text-right py-1">Capture</th>
-              <th class="text-left py-1">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="w in activeWallets" :key="w.address">
-              <tr class="border-t border-slate-700">
-                <td class="py-2 font-mono text-xs" x-text="w.address.slice(0,10) + '...'"></td>
-                <td class="py-2" x-text="w.primary_category"></td>
-                <td class="py-2 text-right" x-text="(w.composite_score || 0).toFixed(1)"></td>
-                <td class="py-2 text-right" x-text="((w.win_rate || 0) * 100).toFixed(0) + '%'"></td>
-                <td class="py-2 text-right" :class="(w.recent_capture_ratio || 0) >= 0.6 ? 'pnl-pos' : 'badge-yellow'" x-text="w.recent_capture_ratio ? (w.recent_capture_ratio * 100).toFixed(0) + '%' : 'n/a'"></td>
-                <td class="py-2"><span class="badge-green" x-text="w.status"></span></td>
-              </tr>
-            </template>
-            <tr x-show="activeWallets.length === 0">
-              <td colspan="6" class="py-4 text-center text-slate-500">No active wallets yet — funnel is running</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <!-- Positions + Signal feed -->
+      <div style="display:grid;grid-template-columns:1fr 360px;gap:0.75rem;margin-bottom:0.75rem;" class="pos-grid">
 
-      <!-- Open positions + signal feed -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
         <!-- Open positions -->
         <div class="card">
-          <h2 class="font-semibold text-white mb-3">Open Positions (<span x-text="openPositions.length"></span>)</h2>
-          <table class="w-full text-sm">
-            <thead class="text-slate-400 text-xs">
+          <div class="section-title">Open Positions <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;" x-text="'('+openPositions.length+')'"></span></div>
+          <table class="data-table">
+            <thead>
               <tr>
-                <th class="text-left py-1">Market</th>
-                <th class="text-left py-1">Side</th>
-                <th class="text-right py-1">Cost</th>
-                <th class="text-right py-1">P&L</th>
+                <th>Market</th>
+                <th>Side</th>
+                <th class="right">Entry</th>
+                <th class="right">Now</th>
+                <th class="right">Cost</th>
+                <th class="right">P&L</th>
               </tr>
             </thead>
             <tbody>
               <template x-for="p in openPositions" :key="p.id">
-                <tr class="border-t border-slate-700">
-                  <td class="py-2 text-xs" x-text="(p.market_id || '').slice(0, 30)"></td>
-                  <td class="py-2"><span :class="p.side === 'YES' ? 'badge-green' : 'badge-red'" x-text="p.side"></span></td>
-                  <td class="py-2 text-right" x-text="'$' + (p.cost_usd || 0).toFixed(2)"></td>
-                  <td class="py-2 text-right" :class="(p.unrealized_pnl_usd || 0) >= 0 ? 'pnl-pos' : 'pnl-neg'" x-text="(p.unrealized_pnl_usd >= 0 ? '+' : '') + '$' + (p.unrealized_pnl_usd || 0).toFixed(2)"></td>
+                <tr>
+                  <td class="mono muted" x-text="(p.market_id||'').slice(0,28)+'…'"></td>
+                  <td><span :class="p.side==='YES'?'badge badge-green':'badge badge-red'" x-text="p.side"></span></td>
+                  <td class="right mono" x-text="(p.entry_price||0).toFixed(3)"></td>
+                  <td class="right mono" x-text="p.current_price?p.current_price.toFixed(3):'—'"></td>
+                  <td class="right mono" x-text="'$'+(p.cost_usd||0).toFixed(2)"></td>
+                  <td class="right mono" :class="(p.unrealized_pnl_usd||0)>=0?'pos':'neg'" x-text="((p.unrealized_pnl_usd||0)>=0?'+':'')+' $'+(p.unrealized_pnl_usd||0).toFixed(2)"></td>
                 </tr>
               </template>
-              <tr x-show="openPositions.length === 0">
-                <td colspan="4" class="py-4 text-center text-slate-500">No open positions</td>
+              <tr x-show="openPositions.length===0">
+                <td colspan="6" class="empty">No open positions</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <!-- Live signal feed -->
-        <div class="card">
-          <h2 class="font-semibold text-white mb-3">Live Signal Feed</h2>
-          <div class="space-y-1 max-h-48 overflow-y-auto" id="signal-feed">
-            <template x-for="(s, i) in signalFeed.slice(0,20)" :key="i">
-              <div class="text-xs py-1 border-b border-slate-700 flex justify-between">
-                <span class="text-slate-400" x-text="s.ts"></span>
-                <span x-text="s.text" class="flex-1 ml-2"></span>
-                <span :class="s.ok ? 'text-green-400' : 'text-slate-500'" x-text="s.ok ? '✓' : 'skip'"></span>
+        <div class="card" style="display:flex;flex-direction:column;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem;">
+            <div class="section-title" style="margin-bottom:0;">Signal Feed</div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--green);">
+              <div class="live-dot" style="width:5px;height:5px;"></div>
+              LIVE
+            </div>
+          </div>
+          <div style="overflow-y:auto;flex:1;max-height:220px;" id="signal-feed">
+            <template x-for="(s,i) in signalFeed.slice(0,30)" :key="i">
+              <div class="feed-row">
+                <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;min-width:56px;font-size:11px;" x-text="s.ts"></span>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="s.text"></span>
+                <span :class="s.ok?'badge badge-green':'badge badge-amber'" style="font-size:10px;" x-text="s.ok?'FILL':'SKIP'"></span>
               </div>
             </template>
-            <p x-show="signalFeed.length === 0" class="text-slate-500 text-xs text-center py-4">Waiting for signals…</p>
+            <div x-show="signalFeed.length===0" class="empty" style="padding:1.5rem;">Waiting for signals…</div>
           </div>
         </div>
       </div>
 
-      <!-- Funnel + Circuit breakers -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-        <div class="card">
-          <h2 class="font-semibold text-white mb-3">Funnel Status</h2>
-          <template x-for="[stage, count] in Object.entries(funnelCounts)" :key="stage">
-            <div class="flex justify-between text-sm py-1 border-b border-slate-800">
-              <span class="text-slate-400" x-text="stage"></span>
-              <span x-text="count"></span>
-            </div>
-          </template>
-        </div>
-        <div class="card">
-          <h2 class="font-semibold text-white mb-3">Circuit Breakers</h2>
-          <div class="space-y-2 text-sm">
-            <div class="flex justify-between">
-              <span class="text-slate-400">Daily P&L</span>
-              <span class="badge-green">OK</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">Weekly P&L</span>
-              <span class="badge-green">OK</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">Drawdown</span>
-              <span class="badge-green">OK</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">Killswitch</span>
-              <span :class="metrics.killswitch_active ? 'badge-red' : 'badge-green'" x-text="metrics.killswitch_active ? 'ACTIVE' : 'OFF'"></span>
-            </div>
-          </div>
-        </div>
+      <!-- Active wallets -->
+      <div class="card">
+        <div class="section-title">Active Lead Wallets <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;" x-text="'('+activeWallets.length+')'"></span></div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Address</th>
+              <th>Category</th>
+              <th class="right">Score</th>
+              <th class="right">Win Rate</th>
+              <th class="right">Profit Factor</th>
+              <th class="right">Capture</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="w in activeWallets" :key="w.address">
+              <tr>
+                <td class="mono" x-text="w.address.slice(0,12)+'…'+w.address.slice(-4)"></td>
+                <td class="muted" x-text="w.primary_category||'—'"></td>
+                <td class="right mono" style="color:var(--cyan);" x-text="(w.composite_score||0).toFixed(2)"></td>
+                <td class="right mono" x-text="((w.win_rate||0)*100).toFixed(0)+'%'"></td>
+                <td class="right mono" x-text="(w.profit_factor||0).toFixed(2)"></td>
+                <td class="right mono" :class="(w.recent_capture_ratio||0)>=0.6?'pos':''" x-text="w.recent_capture_ratio?((w.recent_capture_ratio)*100).toFixed(0)+'%':'n/a'"></td>
+                <td><span class="badge badge-green" x-text="w.status"></span></td>
+              </tr>
+            </template>
+            <tr x-show="activeWallets.length===0">
+              <td colspan="7" class="empty">No active wallets — funnel running</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
-    <!-- ── Wallets tab ── -->
+    <!-- ── WALLETS TAB ──────────────────────────── -->
     <div x-show="activeTab === 'wallets'" x-cloak>
       <div class="card">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="font-semibold text-white">Wallets</h2>
-          <select x-model="walletStatusFilter" @change="loadWallets()" class="bg-slate-800 border border-slate-600 text-sm rounded px-2 py-1">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+          <div class="section-title" style="margin-bottom:0;">Wallet Pool</div>
+          <select x-model="walletStatusFilter" @change="loadWallets()">
             <option value="active">Active</option>
             <option value="shadow">Shadow</option>
             <option value="bench">Bench</option>
@@ -222,197 +486,213 @@
             <option value="disqualified">Disqualified</option>
           </select>
         </div>
-        <table class="w-full text-sm">
-          <thead class="text-slate-400 text-xs">
+        <table class="data-table">
+          <thead>
             <tr>
-              <th class="text-left py-1">Address</th>
-              <th class="text-left py-1">Category</th>
-              <th class="text-right py-1">Score</th>
-              <th class="text-right py-1">WR</th>
-              <th class="text-right py-1">PF</th>
-              <th class="text-right py-1">Trades</th>
-              <th class="text-right py-1">Capture</th>
+              <th>Address</th>
+              <th>Category</th>
+              <th class="right">Score</th>
+              <th class="right">Win Rate</th>
+              <th class="right">Profit Factor</th>
+              <th class="right">Trades</th>
+              <th class="right">Capture</th>
             </tr>
           </thead>
           <tbody>
             <template x-for="w in wallets" :key="w.address">
-              <tr class="border-t border-slate-700 cursor-pointer hover:bg-slate-700" @click="selectedWallet = w">
-                <td class="py-2 font-mono text-xs" x-text="w.address.slice(0,14) + '...'"></td>
-                <td class="py-2" x-text="w.primary_category"></td>
-                <td class="py-2 text-right" x-text="(w.composite_score || 0).toFixed(2)"></td>
-                <td class="py-2 text-right" x-text="((w.win_rate || 0) * 100).toFixed(0) + '%'"></td>
-                <td class="py-2 text-right" x-text="(w.profit_factor || 0).toFixed(2)"></td>
-                <td class="py-2 text-right" x-text="w.closed_trades_count"></td>
-                <td class="py-2 text-right" x-text="w.recent_capture_ratio ? (w.recent_capture_ratio * 100).toFixed(0) + '%' : 'n/a'"></td>
+              <tr style="cursor:pointer;" @click="selectedWallet=w">
+                <td class="mono" x-text="w.address.slice(0,14)+'…'+w.address.slice(-4)"></td>
+                <td class="muted" x-text="w.primary_category||'—'"></td>
+                <td class="right mono" style="color:var(--cyan);" x-text="(w.composite_score||0).toFixed(3)"></td>
+                <td class="right mono" x-text="((w.win_rate||0)*100).toFixed(1)+'%'"></td>
+                <td class="right mono" x-text="(w.profit_factor||0).toFixed(2)"></td>
+                <td class="right mono" x-text="w.closed_trades_count||0"></td>
+                <td class="right mono" :class="(w.recent_capture_ratio||0)>=0.6?'pos':((w.recent_capture_ratio||0)>0?'':'muted')" x-text="w.recent_capture_ratio?((w.recent_capture_ratio)*100).toFixed(0)+'%':'n/a'"></td>
               </tr>
             </template>
+            <tr x-show="wallets.length===0">
+              <td colspan="7" class="empty">No wallets with this status</td>
+            </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- ── Positions tab ── -->
+    <!-- ── POSITIONS TAB ────────────────────────── -->
     <div x-show="activeTab === 'positions'" x-cloak>
       <div class="card">
-        <h2 class="font-semibold text-white mb-4">All Open Positions</h2>
-        <table class="w-full text-sm">
-          <thead class="text-slate-400 text-xs">
+        <div class="section-title">All Open Positions</div>
+        <table class="data-table">
+          <thead>
             <tr>
-              <th class="text-left py-1">ID</th>
-              <th class="text-left py-1">Market</th>
-              <th class="text-left py-1">Side</th>
-              <th class="text-right py-1">Entry</th>
-              <th class="text-right py-1">Current</th>
-              <th class="text-right py-1">Shares</th>
-              <th class="text-right py-1">Cost</th>
-              <th class="text-right py-1">P&L</th>
-              <th class="text-left py-1">Opened</th>
+              <th>#</th>
+              <th>Market</th>
+              <th>Side</th>
+              <th class="right">Entry</th>
+              <th class="right">Current</th>
+              <th class="right">Shares</th>
+              <th class="right">Cost</th>
+              <th class="right">Unrealized P&L</th>
+              <th>Opened</th>
             </tr>
           </thead>
           <tbody>
             <template x-for="p in openPositions" :key="p.id">
-              <tr class="border-t border-slate-700">
-                <td class="py-2" x-text="p.id"></td>
-                <td class="py-2 text-xs max-w-xs truncate" x-text="p.market_id"></td>
-                <td class="py-2"><span :class="p.side === 'YES' ? 'badge-green' : 'badge-red'" x-text="p.side"></span></td>
-                <td class="py-2 text-right" x-text="(p.entry_price || 0).toFixed(3)"></td>
-                <td class="py-2 text-right" x-text="p.current_price ? p.current_price.toFixed(3) : '—'"></td>
-                <td class="py-2 text-right" x-text="(p.size_shares || 0).toFixed(1)"></td>
-                <td class="py-2 text-right" x-text="'$' + (p.cost_usd || 0).toFixed(2)"></td>
-                <td class="py-2 text-right" :class="(p.unrealized_pnl_usd || 0) >= 0 ? 'pnl-pos' : 'pnl-neg'" x-text="(p.unrealized_pnl_usd >= 0 ? '+' : '') + '$' + (p.unrealized_pnl_usd || 0).toFixed(2)"></td>
-                <td class="py-2 text-xs text-slate-400" x-text="p.opened_at ? new Date(p.opened_at).toLocaleString() : ''"></td>
+              <tr>
+                <td class="muted mono" x-text="p.id"></td>
+                <td class="mono muted" style="max-width:200px;" x-text="(p.market_id||'').slice(0,32)"></td>
+                <td><span :class="p.side==='YES'?'badge badge-green':'badge badge-red'" x-text="p.side"></span></td>
+                <td class="right mono" x-text="(p.entry_price||0).toFixed(4)"></td>
+                <td class="right mono" x-text="p.current_price?p.current_price.toFixed(4):'—'"></td>
+                <td class="right mono" x-text="(p.size_shares||0).toFixed(2)"></td>
+                <td class="right mono" x-text="'$'+(p.cost_usd||0).toFixed(2)"></td>
+                <td class="right mono" :class="(p.unrealized_pnl_usd||0)>=0?'pos':'neg'" x-text="((p.unrealized_pnl_usd||0)>=0?'+':'')+' $'+(p.unrealized_pnl_usd||0).toFixed(2)"></td>
+                <td class="muted" x-text="p.opened_at?new Date(p.opened_at).toLocaleString():''"></td>
               </tr>
             </template>
-            <tr x-show="openPositions.length === 0">
-              <td colspan="9" class="py-6 text-center text-slate-500">No open positions</td>
+            <tr x-show="openPositions.length===0">
+              <td colspan="9" class="empty">No open positions</td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- ── Signals tab ── -->
+    <!-- ── SIGNALS TAB ──────────────────────────── -->
     <div x-show="activeTab === 'signals'" x-cloak>
       <div class="card">
-        <h2 class="font-semibold text-white mb-4">Recent Signals</h2>
-        <table class="w-full text-sm">
-          <thead class="text-slate-400 text-xs">
+        <div class="section-title">Recent Signals</div>
+        <table class="data-table">
+          <thead>
             <tr>
-              <th class="text-left py-1">Detected</th>
-              <th class="text-left py-1">Market</th>
-              <th class="text-left py-1">Side</th>
-              <th class="text-right py-1">Price</th>
-              <th class="text-right py-1">Value</th>
-              <th class="text-left py-1">Status</th>
+              <th>Detected</th>
+              <th>Market</th>
+              <th>Side</th>
+              <th class="right">Price</th>
+              <th class="right">Value</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody>
             <template x-for="s in recentSignals" :key="s.id">
-              <tr class="border-t border-slate-700">
-                <td class="py-2 text-xs text-slate-400" x-text="s.detected_at ? new Date(s.detected_at).toLocaleString() : ''"></td>
-                <td class="py-2 text-xs max-w-xs truncate" x-text="s.market_id"></td>
-                <td class="py-2"><span :class="s.side === 'YES' ? 'badge-green' : 'badge-red'" x-text="s.side"></span></td>
-                <td class="py-2 text-right" x-text="(s.price || 0).toFixed(3)"></td>
-                <td class="py-2 text-right" x-text="'$' + (s.value_usd || 0).toFixed(2)"></td>
-                <td class="py-2"><span :class="s.status === 'executed' ? 'badge-green' : 'badge-yellow'" x-text="s.status"></span></td>
+              <tr>
+                <td class="muted" x-text="s.detected_at?new Date(s.detected_at).toLocaleString():''"></td>
+                <td class="mono muted" x-text="(s.market_id||'').slice(0,36)"></td>
+                <td><span :class="s.side==='YES'?'badge badge-green':'badge badge-red'" x-text="s.side"></span></td>
+                <td class="right mono" x-text="(s.price||0).toFixed(4)"></td>
+                <td class="right mono" x-text="'$'+(s.value_usd||0).toFixed(2)"></td>
+                <td><span :class="s.status==='executed'?'badge badge-green':'badge badge-amber'" x-text="s.status"></span></td>
               </tr>
             </template>
+            <tr x-show="recentSignals.length===0">
+              <td colspan="6" class="empty">No signals yet</td>
+            </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- ── Funnel tab ── -->
+    <!-- ── FUNNEL TAB ───────────────────────────── -->
     <div x-show="activeTab === 'funnel'" x-cloak>
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+
         <div class="card">
-          <h2 class="font-semibold text-white mb-4">Pipeline Counts</h2>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+            <div class="section-title" style="margin-bottom:0;">Pipeline</div>
+            <button @click="triggerFunnel()" class="btn btn-primary" style="font-size:12px;padding:0.3rem 0.75rem;">
+              ↻ Re-run Funnel
+            </button>
+          </div>
           <template x-for="[stage, count] in Object.entries(funnelCounts)" :key="stage">
-            <div class="flex justify-between py-2 border-b border-slate-800">
-              <span class="text-slate-300 capitalize" x-text="stage"></span>
-              <span class="font-bold" x-text="count"></span>
-            </div>
-          </template>
-          <button @click="triggerFunnel()" class="mt-4 w-full bg-sky-700 hover:bg-sky-600 text-white text-sm font-medium py-2 rounded">
-            Force Re-run Funnel
-          </button>
-        </div>
-        <div class="card">
-          <h2 class="font-semibold text-white mb-4">Shadow Pool</h2>
-          <template x-for="w in shadowWallets" :key="w.address">
-            <div class="border-b border-slate-800 py-2">
-              <div class="font-mono text-xs" x-text="w.address.slice(0,16) + '...'"></div>
-              <div class="flex gap-4 text-xs text-slate-400 mt-1">
-                <span>Copies: <strong x-text="w.shadow_copies_count"></strong></span>
-                <span>P&L: <strong :class="(w.shadow_pnl_usd || 0) >= 0 ? 'pnl-pos' : 'pnl-neg'" x-text="'$' + (w.shadow_pnl_usd || 0).toFixed(2)"></strong></span>
-                <span>Capture: <strong x-text="w.shadow_capture_ratio ? (w.shadow_capture_ratio*100).toFixed(0)+'%' : 'n/a'"></strong></span>
+            <div class="funnel-row">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="text-transform:capitalize;color:var(--muted2);font-size:13px;" x-text="stage"></span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:14px;" x-text="count"></span>
+              </div>
+              <div class="funnel-bar-bg">
+                <div class="funnel-bar-fill" :style="'width:'+Math.min(100, (count/50)*100)+'%'"></div>
               </div>
             </div>
           </template>
-          <p x-show="shadowWallets.length === 0" class="text-slate-500 text-sm text-center py-4">No shadow wallets yet</p>
+          <div x-show="Object.keys(funnelCounts).length===0" class="empty">Loading funnel data…</div>
+        </div>
+
+        <div class="card">
+          <div class="section-title">Shadow Pool <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;" x-text="'('+shadowWallets.length+')'"></span></div>
+          <template x-for="w in shadowWallets" :key="w.address">
+            <div style="padding:0.6rem 0;border-bottom:1px solid var(--border);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
+                <span class="mono" style="font-size:12px;" x-text="w.address.slice(0,14)+'…'+w.address.slice(-4)"></span>
+                <span class="badge badge-purple">Shadow</span>
+              </div>
+              <div style="display:flex;gap:1rem;font-size:12px;">
+                <span style="color:var(--muted);">Copies: <strong x-text="w.shadow_copies_count||0"></strong></span>
+                <span style="color:var(--muted);">P&L: <strong :class="(w.shadow_pnl_usd||0)>=0?'pos':'neg'" x-text="'$'+(w.shadow_pnl_usd||0).toFixed(2)"></strong></span>
+                <span style="color:var(--muted);">Capture: <strong x-text="w.shadow_capture_ratio?((w.shadow_capture_ratio)*100).toFixed(0)+'%':'n/a'"></strong></span>
+              </div>
+            </div>
+          </template>
+          <div x-show="shadowWallets.length===0" class="empty">No shadow wallets yet</div>
         </div>
       </div>
     </div>
 
-    <!-- ── Settings tab ── -->
+    <!-- ── SETTINGS TAB ─────────────────────────── -->
     <div x-show="activeTab === 'settings'" x-cloak>
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style="display:grid;grid-template-columns:1fr 320px;gap:0.75rem;">
         <div class="card">
-          <h2 class="font-semibold text-white mb-4">Bot Config</h2>
-          <template x-for="[k, v] in Object.entries(botConfig)" :key="k">
-            <div class="flex justify-between py-2 border-b border-slate-800 text-sm">
-              <span class="text-slate-400" x-text="k"></span>
-              <span x-text="String(v)"></span>
-            </div>
-          </template>
+          <div class="section-title">Bot Configuration</div>
+          <table class="data-table">
+            <thead>
+              <tr><th>Setting</th><th class="right">Value</th></tr>
+            </thead>
+            <tbody>
+              <template x-for="[k, v] in Object.entries(botConfig)" :key="k">
+                <tr>
+                  <td class="muted mono" x-text="k"></td>
+                  <td class="right mono" x-text="String(v)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
         </div>
         <div class="card">
-          <h2 class="font-semibold text-white mb-4">Actions</h2>
-          <button @click="testWebhook()" class="w-full mb-3 bg-slate-700 hover:bg-slate-600 text-sm font-medium py-2 rounded">
-            Test Webhook (Discord + ntfy)
+          <div class="section-title">Actions</div>
+          <button @click="testWebhook()" class="btn btn-ghost" style="width:100%;margin-bottom:0.5rem;">
+            Test Webhook
           </button>
-          <div x-show="actionMsg" class="text-sm text-green-400 mt-2" x-text="actionMsg"></div>
+          <div x-show="actionMsg" style="margin-top:0.75rem;padding:0.5rem 0.75rem;background:var(--green-dim);border:1px solid rgba(74,222,128,0.2);border-radius:6px;font-size:13px;color:var(--green);" x-text="actionMsg"></div>
         </div>
       </div>
     </div>
 
   </main>
 
+  <!-- ═══════════════════ SCRIPT ═══════════════════ -->
   <script>
     function botApp() {
       return {
         activeTab: 'overview',
         tabs: [
-          { id: 'overview',   label: 'Overview'  },
-          { id: 'wallets',    label: 'Wallets'   },
-          { id: 'positions',  label: 'Positions' },
-          { id: 'signals',    label: 'Signals'   },
-          { id: 'funnel',     label: 'Funnel'    },
-          { id: 'settings',   label: 'Settings'  },
+          { id: 'overview',  label: 'Overview'  },
+          { id: 'wallets',   label: 'Wallets'   },
+          { id: 'positions', label: 'Positions' },
+          { id: 'signals',   label: 'Signals'   },
+          { id: 'funnel',    label: 'Funnel'    },
+          { id: 'settings',  label: 'Settings'  },
         ],
-
-        // State
-        equity: {},
-        metrics: {},
-        activeWallets: [],
-        openPositions: [],
-        recentSignals: [],
-        signalFeed: [],
-        funnelCounts: {},
-        shadowWallets: [],
-        wallets: [],
-        walletStatusFilter: 'active',
+        equity: {}, metrics: {},
+        activeWallets: [], openPositions: [],
+        recentSignals: [], signalFeed: [],
+        funnelCounts: {}, shadowWallets: [],
+        wallets: [], walletStatusFilter: 'shadow',
         botConfig: {},
         equityWindow: '7d',
-        mode: 'PAPER',
-        tier: 0,
-        tradeSize: '$5',
-        slots: '0/10',
-        deployed: '$0',
-        allClear: true,
-        lastUpdate: '',
-        selectedWallet: null,
-        actionMsg: '',
+        mode: 'PAPER', tier: 0,
+        tradeSize: '$5', slots: '0/10', deployed: '$0',
+        allClear: true, lastUpdate: '',
+        selectedWallet: null, actionMsg: '',
+        wsConnected: false,
 
         async init() {
           await this.loadAll();
@@ -431,56 +711,57 @@
             this.loadConfig(),
           ]);
           this.lastUpdate = new Date().toLocaleTimeString();
+          this.$nextTick(() => this.loadEquityChart(this.equityWindow));
         },
 
         async loadEquityLatest() {
           const r = await fetch('/api/equity/latest').catch(() => null);
-          if (r) this.equity = await r.json();
+          if (r && r.ok) this.equity = await r.json();
         },
 
         async loadEquityChart(window = '7d') {
           this.equityWindow = window;
           const r = await fetch(`/api/equity/history?window=${window}`).catch(() => null);
-          if (!r) return;
+          if (!r || !r.ok) return;
           const data = await r.json();
           const x = data.map(d => d.ts);
           const y = data.map(d => d.total_equity);
           Plotly.react('equity-chart', [{
             x, y, type: 'scatter', mode: 'lines',
-            line: { color: '#38bdf8', width: 2 },
-            fill: 'tozeroy', fillcolor: 'rgba(56,189,248,0.08)',
+            line: { color: '#22d3ee', width: 2 },
+            fill: 'tozeroy', fillcolor: 'rgba(34,211,238,0.06)',
           }], {
-            margin: { t: 0, b: 30, l: 50, r: 10 },
+            margin: { t: 4, b: 28, l: 52, r: 8 },
             paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
-            xaxis: { color: '#64748b', gridcolor: '#1e293b' },
-            yaxis: { color: '#64748b', gridcolor: '#334155' },
-            font: { color: '#94a3b8', size: 11 },
+            xaxis: { color: '#4b5563', gridcolor: 'rgba(31,41,55,0.5)', zeroline: false },
+            yaxis: { color: '#4b5563', gridcolor: 'rgba(31,41,55,0.5)', zeroline: false },
+            font: { color: '#6b7280', size: 11, family: 'Inter' },
           }, { displayModeBar: false, responsive: true });
         },
 
         async loadMetrics() {
           const r = await fetch('/metrics').catch(() => null);
-          if (r) this.metrics = await r.json();
+          if (r && r.ok) this.metrics = await r.json();
         },
 
         async loadActiveWallets() {
           const r = await fetch('/api/wallets/?status=active').catch(() => null);
-          if (r) this.activeWallets = await r.json();
+          if (r && r.ok) this.activeWallets = await r.json();
         },
 
         async loadWallets() {
           const r = await fetch(`/api/wallets/?status=${this.walletStatusFilter}`).catch(() => null);
-          if (r) this.wallets = await r.json();
+          if (r && r.ok) this.wallets = await r.json();
         },
 
         async loadPositions() {
           const r = await fetch('/api/positions/open').catch(() => null);
-          if (r) this.openPositions = await r.json();
+          if (r && r.ok) this.openPositions = await r.json();
         },
 
         async loadSignals() {
           const r = await fetch('/api/signals/recent?limit=50').catch(() => null);
-          if (r) this.recentSignals = await r.json();
+          if (r && r.ok) this.recentSignals = await r.json();
         },
 
         async loadFunnel() {
@@ -488,20 +769,29 @@
             fetch('/api/funnel/counts').catch(() => null),
             fetch('/api/funnel/shadow').catch(() => null),
           ]);
-          if (cr) this.funnelCounts = await cr.json();
-          if (sr) this.shadowWallets = await sr.json();
+          if (cr && cr.ok) this.funnelCounts = await cr.json();
+          if (sr && sr.ok) this.shadowWallets = await sr.json();
         },
 
         async loadConfig() {
           const r = await fetch('/api/config/').catch(() => null);
-          if (r) this.botConfig = await r.json();
-          if (this.botConfig.trading_mode) this.mode = this.botConfig.trading_mode;
+          if (r && r.ok) {
+            this.botConfig = await r.json();
+            if (this.botConfig.trading_mode) this.mode = this.botConfig.trading_mode;
+          }
         },
 
         connectWS() {
           const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
           const ws = new WebSocket(`${protocol}://${location.host}/ws`);
-          ws.onopen = () => setInterval(() => ws.readyState === 1 && ws.send('ping'), 30000);
+          ws.onopen = () => {
+            this.wsConnected = true;
+            setInterval(() => ws.readyState === 1 && ws.send('ping'), 30000);
+          };
+          ws.onclose = () => {
+            this.wsConnected = false;
+            setTimeout(() => this.connectWS(), 3000);
+          };
           ws.onmessage = (e) => {
             try {
               const msg = JSON.parse(e.data);
@@ -509,28 +799,27 @@
               this.handleWsEvent(msg);
             } catch {}
           };
-          ws.onclose = () => setTimeout(() => this.connectWS(), 3000);
         },
 
         handleWsEvent(msg) {
-          const ts = new Date(msg.ts).toLocaleTimeString();
+          const ts = new Date(msg.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
           if (msg.type === 'signal.detected') {
-            this.signalFeed.unshift({ ts, text: `${msg.data.wallet_address?.slice(0,8)} ${msg.data.side} ${msg.data.market_id?.slice(0,20)}`, ok: false });
+            this.signalFeed.unshift({ ts, text: `${msg.data.wallet_address?.slice(0,8)} · ${msg.data.side} · ${msg.data.market_id?.slice(0,22)}`, ok: false });
           } else if (msg.type === 'position.opened') {
-            this.signalFeed.unshift({ ts, text: `FILLED ${msg.data.market_id?.slice(0,20)}`, ok: true });
+            this.signalFeed.unshift({ ts, text: `FILLED  ${msg.data.market_id?.slice(0,24)}`, ok: true });
             this.loadPositions();
           } else if (msg.type === 'position.closed') {
             this.loadPositions();
           } else if (msg.type === 'wallet.promoted') {
             this.loadActiveWallets();
           }
-          if (this.signalFeed.length > 50) this.signalFeed = this.signalFeed.slice(0, 50);
+          if (this.signalFeed.length > 60) this.signalFeed = this.signalFeed.slice(0, 60);
         },
 
         async triggerFunnel() {
           await fetch('/api/funnel/run', { method: 'POST' });
           this.actionMsg = 'Funnel re-run triggered';
-          setTimeout(() => this.actionMsg = '', 3000);
+          setTimeout(() => { this.actionMsg = ''; this.loadFunnel(); }, 3000);
         },
 
         async testWebhook() {
@@ -538,24 +827,20 @@
           this.actionMsg = 'Webhook test sent!';
           setTimeout(() => this.actionMsg = '', 3000);
         },
-
-        // Auto-load equity chart when overview tab first shows
-        get equityChartReady() {
-          if (this.activeTab === 'overview') {
-            this.$nextTick(() => this.loadEquityChart(this.equityWindow));
-          }
-          return true;
-        },
       };
     }
-
-    // Load chart on page ready
-    document.addEventListener('DOMContentLoaded', () => {
-      setTimeout(() => {
-        const app = document.querySelector('[x-data]').__x?.$data;
-        if (app) app.loadEquityChart('7d');
-      }, 500);
-    });
   </script>
+
+  <!-- Responsive tweaks -->
+  <style>
+    @media (max-width: 1100px) {
+      .kpi-grid  { grid-template-columns: repeat(2,1fr) !important; }
+      .chart-grid { grid-template-columns: 1fr !important; }
+      .pos-grid  { grid-template-columns: 1fr !important; }
+    }
+    @media (max-width: 640px) {
+      .kpi-grid { grid-template-columns: 1fr !important; }
+    }
+  </style>
 </body>
 </html>
