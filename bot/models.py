@@ -1,209 +1,97 @@
-"""
-Shared data models used across all bot modules.
-Import from here to avoid circular dependencies.
-"""
-from __future__ import annotations
-
-import uuid
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from enum import StrEnum
 
 
-# ── Enums ─────────────────────────────────────────────────────────────────────
-
-class Mode(str, Enum):
-    PAPER = "PAPER"
-    LIVE = "LIVE"
-
-
-class OrderSide(str, Enum):
+class Side(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
 
 
-class OrderStatus(str, Enum):
-    PENDING = "PENDING"
-    SUBMITTED = "SUBMITTED"
-    FILLED = "FILLED"
-    PARTIAL = "PARTIAL"
-    CANCELED = "CANCELED"
-    REJECTED = "REJECTED"
-    EXPIRED = "EXPIRED"
+class Mode(StrEnum):
+    PAPER = "PAPER"
+    LIVE = "LIVE"
 
 
-class SignalStatus(str, Enum):
-    PENDING = "pending"
-    EXECUTED = "executed"
-    SKIPPED = "skipped"
-    AGGREGATED = "aggregated"
+class DecisionCode(StrEnum):
+    COPIED = "COPIED"
+    SKIP_DUPLICATE = "SKIP_DUPLICATE"
+    SKIP_MIN_SIZE = "SKIP_MIN_SIZE"
+    SKIP_INSUFFICIENT_CASH = "SKIP_INSUFFICIENT_CASH"
+    SKIP_MARKET_LIMIT = "SKIP_MARKET_LIMIT"
+    SKIP_MAX_OPEN_MARKETS = "SKIP_MAX_OPEN_MARKETS"
+    SKIP_PARSE_ERROR = "SKIP_PARSE_ERROR"
+    SKIP_LEADER_BANKROLL_STALE = "SKIP_LEADER_BANKROLL_STALE"
+    SKIP_LEADER_BANKROLL_UNKNOWN = "SKIP_LEADER_BANKROLL_UNKNOWN"
+    SKIP_KILL_SWITCH = "SKIP_KILL_SWITCH"
+    SKIP_MARKET_ILLQUID = "SKIP_MARKET_ILLQUID"
+    SKIP_LIVE_DISABLED = "SKIP_LIVE_DISABLED"
+    SKIP_EXECUTION_ERROR = "SKIP_EXECUTION_ERROR"
+    CONFLICT_NET_ZERO = "CONFLICT_NET_ZERO"
+    CONFLICT_OPPOSING_SIGNALS = "CONFLICT_OPPOSING_SIGNALS"
+    CONFLICT_MIN_SIZE_AFTER_NETTING = "CONFLICT_MIN_SIZE_AFTER_NETTING"
+    SKIP_WALLET_UNRANKED = "SKIP_WALLET_UNRANKED"
 
 
-class LeaderTier(str, Enum):
-    ACTIVE = "active"
-    STANDBY = "standby"
+@dataclass(slots=True)
+class Leader:
+    proxy: str
+    rank: int
+    score: float
+    pnl_30d: float = 0.0
+    win_rate: float = 0.0
+    trade_count_30d: int = 0
+    status: str = "active"
+    cluster_id: str = ""
 
 
-class LeaderStatus(str, Enum):
-    ACTIVE = "active"
-    COLD = "cold"
-    PAUSED = "paused"
+@dataclass(slots=True)
+class LeaderCandidate:
+    proxy: str
+    pnl_30d: float = 0.0
+    pnl_7d: float = 0.0
+    win_rate: float = 0.0
+    trade_count_30d: int = 0
+    distinct_markets: int = 0
+    max_drawdown: float = 0.0
+    trade_freq_per_day: float = 0.0
+    account_age_days: int = 0
+    value_usd: float = 0.0
+    wash_score: float = 0.0
+    score: float = 0.0
+    exclude_reason: str | None = None
 
 
-# ── Market / book ─────────────────────────────────────────────────────────────
-
-@dataclass
-class BookLevel:
-    price: float
-    size: float
-
-
-@dataclass
-class OrderBook:
-    token_id: str
-    bids: list[BookLevel]
-    asks: list[BookLevel]
-    market_id: str = ""
-    timestamp: int = 0
-
-    def best_ask(self) -> float | None:
-        return self.asks[0].price if self.asks else None
-
-    def best_bid(self) -> float | None:
-        return self.bids[0].price if self.bids else None
-
-    def mid(self) -> float | None:
-        a, b = self.best_ask(), self.best_bid()
-        if a is None or b is None:
-            return None
-        return (a + b) / 2
-
-
-@dataclass
-class MarketInfo:
-    condition_id: str
-    yes_token_id: str
-    no_token_id: str
-    question: str
-    end_date_iso: str
-    tick_size: float
-    min_order_size: float
-    active: bool
-    resolved: bool
-
-
-# ── Leader signals ─────────────────────────────────────────────────────────────
-
-@dataclass
-class LeaderTrade:
-    """A raw trade detected from a leader wallet."""
+@dataclass(slots=True)
+class LeaderTradeEvent:
+    event_id: str
     leader_proxy: str
     condition_id: str
     token_id: str
-    outcome: str
-    side: OrderSide
+    side: Side
     price: float
-    size_shares: float
-    detected_at: int      # unix ts
-    source: str           # "data_api" | "polygon_log"
-    trade_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    usdc_size: float
+    timestamp: int
+    tx_hash: str
+    outcome: str = ""
 
 
-@dataclass
-class SignalEvent:
-    """Normalized signal ready for aggregation."""
-    proxy_address: str
-    leader_rank: int
+@dataclass(slots=True)
+class CopyIntent:
+    event_id: str
+    leader_proxy: str
     condition_id: str
     token_id: str
-    outcome: str
-    side: OrderSide
-    leader_price: float
-    leader_size: float
-    detected_ts: int
-    status: SignalStatus
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    exit_reason: str | None = None
-
-
-# ── Order execution ────────────────────────────────────────────────────────────
-
-@dataclass
-class OrderIntent:
-    """Everything needed to execute one order."""
-    condition_id: str
-    token_id: str
-    outcome: str
-    side: OrderSide
+    side: Side
+    target_notional: float
+    target_shares: float
     limit_price: float
-    size_shares: float
-    client_order_id: str
-    signal_ids: list[str]
-    leader_ranks: list[int]
+    leader_fraction: float = 0.0
+    sizing_details: dict = field(default_factory=dict)
 
 
-@dataclass
-class FillResult:
-    """Result from paper simulator or live CLOB."""
-    client_order_id: str
-    exchange_order_id: str | None
-    status: OrderStatus
-    filled_shares: float
-    avg_price: float
-    fee_usd: float
-    filled_at_ts: int
-    reject_reason: str | None = None
-
-
-# ── Positions ─────────────────────────────────────────────────────────────────
-
-@dataclass
-class Position:
-    """An open or closed position in either ledger."""
-    condition_id: str
-    token_id: str
-    outcome: str
-    shares: float
-    cost_usd: float
-    avg_entry_price: float
-    opened_at_ts: int
-    mode: str
-    signal_ids: list[str] = field(default_factory=list)
-    leader_ranks: list[int] = field(default_factory=list)
-    realized_pnl: float | None = None
-    closed_at_ts: int | None = None
-    exit_reason: str | None = None
-
-
-# ── Leaders ────────────────────────────────────────────────────────────────────
-
-@dataclass
-class LeaderCandidate:
-    """Raw candidate from the discovery funnel."""
-    proxy_address: str
-    trades_30d: int
-    trade_freq: float
-    win_rate: float
-    realized_pnl_30d: float
-    avg_position_usd: float
-    per_trade_pnl: float
-    per_trade_pnl_std: float
-    sharpe_like: float
-    market_diversity: float
-    recent_7d_pnl: float
-    median_hold_hours: float
-    wash_score: float
-    last_trade_ts: int
-
-
-@dataclass
-class Leader:
-    """Scored, ranked leader on the active roster."""
-    proxy_address: str
-    rank: int
-    tier: LeaderTier
-    score: float
-    score_delta: float
-    status: LeaderStatus
-    cold_since_ts: int | None
-    snapshot_date: str      # YYYY-MM-DD
+@dataclass(slots=True)
+class BankrollSnapshot:
+    proxy: str
+    bankroll_usd: float
+    updated_at: int
+    stale: bool = False

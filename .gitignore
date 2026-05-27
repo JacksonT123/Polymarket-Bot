@@ -1,50 +1,8 @@
-# Secrets / credentials — NEVER commit
 .env
-*.key
-*.pem
-secrets/
-
-# Python
+bot.db
+bot.db-*
 __pycache__/
-*.py[cod]
-*.pyo
+*.pyc
 .venv/
-venv/
-.uv/
 *.egg-info/
-dist/
-build/
-*.egg
-
-# Bot database
-*.db
-*.db-shm
-*.db-wal
-
-# Logs
-*.log
-logs/
-
-# Node / dashboard
-dashboard/node_modules/
-dashboard/.next/
-dashboard/out/
-dashboard/.pnpm-store/
-
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Test artifacts
 .pytest_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-coverage.xml

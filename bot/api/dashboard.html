@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Polymarket Copy Trader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#070b12;--panel:#0f1623;--panel2:#141e2e;--border:#243044;
+  --text:#e8eef7;--muted:#8b9cb3;--green:#3dd68c;--red:#f87171;
+  --amber:#fbbf24;--blue:#60a5fa;--accent:#6366f1;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:"IBM Plex Sans",system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+a{color:var(--blue)}
+header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#0c121c,#070b12)}
+header h1{margin:0;font-size:1.15rem;font-weight:600;letter-spacing:-.02em}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:600;background:var(--panel2);border:1px solid var(--border)}
+.badge.live{border-color:var(--green);color:var(--green)}
+.badge.paper{border-color:var(--blue);color:var(--blue)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+.dot.warn{background:var(--amber)}
+.dot.off{background:var(--muted);animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.btn{background:var(--accent);color:#fff;border:0;padding:8px 14px;border-radius:8px;font-weight:600;cursor:pointer;font-size:.8rem}
+.btn:hover{filter:brightness(1.1)}
+.btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
+.wrap{max-width:1400px;margin:0 auto;padding:20px 24px 48px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.stat .lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
+.stat .val{font-size:1.55rem;font-weight:700;font-variant-numeric:tabular-nums}
+.stat .sub{font-size:.75rem;color:var(--muted);margin-top:4px}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.panel-h{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.panel-h h2{margin:0;font-size:.85rem;font-weight:600}
+.panel-b{padding:0;max-height:360px;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:.78rem}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:500;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;background:var(--panel2)}
+tr:hover td{background:rgba(99,102,241,.06)}
+.mono{font-family:"IBM Plex Mono",monospace;font-size:.72rem}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:12px 16px}
+.chip{padding:4px 10px;border-radius:6px;background:var(--panel2);border:1px solid var(--border);font-size:.72rem}
+.chip b{color:var(--text)}
+.chip.skip b{color:var(--red)}
+.chip.ok b{color:var(--green)}
+.status-bar{display:flex;gap:16px;flex-wrap:wrap;padding:12px 16px;background:var(--panel2);border-bottom:1px solid var(--border);font-size:.78rem;color:var(--muted)}
+.status-bar strong{color:var(--text)}
+.tabs{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border)}
+.tab{padding:6px 12px;border-radius:6px;font-size:.75rem;cursor:pointer;color:var(--muted);border:0;background:0}
+.tab.active{background:var(--accent);color:#fff}
+.hidden{display:none}
+.code-COPIED{color:var(--green)}
+.code-DETECTED{color:var(--blue)}
+td[class^="code-"]{font-weight:500;font-size:.7rem}
+.alert{margin:0 0 16px;padding:12px 16px;border-radius:10px;background:#1a1408;border:1px solid #854d0e;color:#fde68a;font-size:.82rem}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Polymarket Copy Trader</h1>
+    <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+      <span class="badge paper" id="modeBadge"><span class="dot" id="liveDot"></span><span id="modeText">PAPER</span></span>
+      <span class="badge" id="engineBadge">Engine —</span>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button class="btn ghost" onclick="location.reload()">Refresh</button>
+    <button class="btn" onclick="runDiscovery()">Re-run discovery</button>
+  </div>
+</header>
+<div class="wrap">
+  <div id="haltAlert" class="alert hidden"></div>
+  <div class="stats" id="stats"></div>
+  <div class="grid2">
+    <div class="panel">
+      <div class="panel-h"><h2>Open positions</h2><span id="posCount" class="mono" style="color:var(--muted)"></span></div>
+      <div class="panel-b"><table><thead><tr><th>Market</th><th>Shares</th><th>Avg→Mark</th><th>MTM</th><th>P&amp;L</th><th>Leader</th></tr></thead><tbody id="posRows"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><h2>Recent fills</h2></div>
+      <div class="panel-b"><table><thead><tr><th>Time</th><th>Side</th><th>$</th><th>Leader</th></tr></thead><tbody id="fillRows"></tbody></table></div>
+    </div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="panel">
+    <div class="status-bar" id="statusBar"></div>
+    <div class="panel-h"><h2>Why copies stop (last hour)</h2></div>
+    <div class="chips" id="skipChips"></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="panel">
+    <div class="tabs">
+      <button class="tab active" data-tab="log" onclick="setTab('log')">Activity log</button>
+      <button class="tab" data-tab="leaders" onclick="setTab('leaders')">Leaders</button>
+    </div>
+    <div class="panel-b" id="tab-log"><table><thead><tr><th>Time</th><th>Stage</th><th>Code</th><th>Leader</th><th>Details</th></tr></thead><tbody id="logRows"></tbody></table></div>
+    <div class="panel-b hidden" id="tab-leaders"><table><thead><tr><th>#</th><th>Wallet</th><th>Score</th><th>30d PnL</th><th>Win%</th></tr></thead><tbody id="leaderRows"></tbody></table></div>
+  </div>
+</div>
+<script>
+let ws, lastData=null, lastVersion=0;
+function fmt$(n){return '$'+Number(n).toFixed(2)}
+function fmtTs(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleTimeString()}
+function shortAddr(a){return a?a.slice(0,6)+'…'+a.slice(-4):'—'}
+function pnlClass(n){return Number(n)>=0?'pos':'neg'}
+function setTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
+  document.getElementById('tab-log').classList.toggle('hidden',name!=='log');
+  document.getElementById('tab-leaders').classList.toggle('hidden',name!=='leaders');
+}
+function connectWs(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(proto+'://'+location.host+'/ws');
+  ws.onmessage=e=>render(JSON.parse(e.data));
+  ws.onclose=()=>setTimeout(connectWs,2000);
+}
+function render(d){
+  lastData=d;
+  if(d.push_version&&d.push_version!==lastVersion){
+    lastVersion=d.push_version;
+    document.getElementById('liveDot').classList.add('pulse');
+    setTimeout(()=>document.getElementById('liveDot').classList.remove('pulse'),300);
+  }
+  const pnl=d.pnl_usd, pos=pnl>=0;
+  const unreal=d.unrealized_pnl_usd||0, real=d.realized_pnl_usd||0;
+  const mode=d.config.mode;
+  document.getElementById('modeText').textContent=mode+(d.config.live_ready?' · LIVE READY':'');
+  document.getElementById('modeBadge').className='badge '+(mode==='LIVE'?'live':'paper');
+  const eng=d.engine||{};
+  const pollOk=eng.seconds_since_poll!=null&&eng.seconds_since_poll<15;
+  document.getElementById('liveDot').className='dot '+(pollOk?'':'warn');
+  document.getElementById('engineBadge').textContent=pollOk
+    ?`Polling · ${eng.leaders_polled||0} leaders · cycle #${eng.poll_cycles||0}`
+    :`Engine idle? · last poll ${eng.seconds_since_poll??'?'}s ago`;
+
+  document.getElementById('stats').innerHTML=`
+    <div class="stat"><div class="lbl">Live equity</div><div class="val">${fmt$(d.account.equity_usd)}</div><div class="sub">Started ${fmt$(d.account.starting_equity_usd||100)} · MTM</div></div>
+    <div class="stat"><div class="lbl">Total P&amp;L</div><div class="val ${pnlClass(pnl)}">${pnl>=0?'+':''}${fmt$(pnl)}</div><div class="sub">${Number(d.pnl_pct).toFixed(2)}%</div></div>
+    <div class="stat"><div class="lbl">Unrealized</div><div class="val ${pnlClass(unreal)}">${unreal>=0?'+':''}${fmt$(unreal)}</div><div class="sub">Realized ${real>=0?'+':''}${fmt$(real)}</div></div>
+    <div class="stat"><div class="lbl">Cash</div><div class="val">${fmt$(d.cash_usd)}</div><div class="sub">${fmt$(d.invested_mtm_usd||d.invested_usd)} in positions</div></div>
+    <div class="stat"><div class="lbl">Fills</div><div class="val">${d.metrics.fills||0}</div><div class="sub">${d.open_markets}/${d.config.max_open_markets} markets</div></div>
+    <div class="stat"><div class="lbl">Last copy</div><div class="val" style="font-size:1rem">${eng.seconds_since_copy!=null?eng.seconds_since_copy+'s ago':'never'}</div><div class="sub">Updated ${fmtTs(d.updated_at)}</div></div>
+  `;
+
+  const alert=document.getElementById('haltAlert');
+  const reasons=[];
+  if(d.kill_switch) reasons.push('Kill switch is ON — trading blocked.');
+  const minCopy=d.config.min_copy_usd||1;
+  if(d.cash_usd<minCopy&&d.open_markets>=d.config.max_open_markets)
+    reasons.push('Cash low and max open markets reached — waiting for sells or redeems.');
+  else if(d.cash_usd<2) reasons.push('Low cash ($'+d.cash_usd.toFixed(2)+') — new BUYs may skip until leaders sell or positions redeem.');
+  if((eng.rate_limit_cooldown_sec||0)>0)
+    reasons.push('API cooldown active ('+eng.rate_limit_cooldown_sec+'s) — backing off after rate limit.');
+  else if((eng.rate_limit_hits||0)>10)
+    reasons.push('Some API rate limits recently ('+eng.rate_limit_hits+' hits) — polling slowed automatically.');
+  else if(eng.api_errors>10)
+    reasons.push('API errors ('+eng.api_errors+') — check network or wait for cooldown.');
+  if(eng.seconds_since_copy>300&&eng.seconds_since_poll<20)
+    reasons.push('Bot is running but no copies recently — leaders may not be trading new positions (normal).');
+  if(reasons.length){alert.classList.remove('hidden');alert.innerHTML=reasons.map(r=>'• '+r).join('<br>');}
+  else alert.classList.add('hidden');
+
+  document.getElementById('posCount').textContent=(d.positions||[]).length+' open';
+  document.getElementById('posRows').innerHTML=(d.positions||[]).map(p=>{
+    const upnl=p.unrealized_pnl??0;
+    const mark=p.mark_price??p.avg_price;
+    return `<tr><td class="mono" title="${p.condition_id}">${p.condition_id.slice(0,10)}…</td><td>${Number(p.shares).toFixed(2)}</td><td>${Number(p.avg_price).toFixed(3)}→${Number(mark).toFixed(3)}</td><td>${fmt$(p.mtm_usd??p.shares*mark)}</td><td class="${pnlClass(upnl)}">${upnl>=0?'+':''}${fmt$(upnl)}</td><td class="mono">${shortAddr(p.leader_proxy)}</td></tr>`;
+  }).join('')||'<tr><td colspan="6" style="color:var(--muted)">No open positions</td></tr>';
+
+  document.getElementById('fillRows').innerHTML=(d.fills_recent||[]).map(f=>
+    `<tr><td>${fmtTs(f.ts)}</td><td class="${f.side==='BUY'?'pos':'neg'}">${f.side}</td><td>${fmt$(f.notional)}</td><td class="mono">${shortAddr(f.leader_proxy)}</td></tr>`
+  ).join('')||'<tr><td colspan="4" style="color:var(--muted)">No fills yet</td></tr>';
+
+  const by=d.summary_1h?.by_code||{};
+  const chips=Object.entries(by).sort((a,b)=>b[1]-a[1]);
+  document.getElementById('skipChips').innerHTML=chips.map(([c,n])=>{
+    const ok=c==='COPIED'||c==='DETECTED';
+    return `<span class="chip ${ok?'ok':'skip'}"><b>${c}</b> ×${n}</span>`;
+  }).join('')||'<span style="color:var(--muted);padding:12px">No activity yet</span>';
+
+  document.getElementById('statusBar').innerHTML=`
+    <span>Uptime <strong>${Math.floor((eng.uptime_sec||0)/60)}m</strong></span>
+    <span>Events this cycle <strong>${eng.events_seen||0}</strong></span>
+    <span>Rate-limit hits <strong>${eng.rate_limit_hits||0}</strong></span>
+    <span>Cooldown <strong>${eng.rate_limit_cooldown_sec||0}s</strong></span>
+    <span>Live feed <strong>${d.config.ws_interval_ms||500}ms</strong></span>
+    <span>Updated <strong>${fmtTs(d.updated_at)}</strong></span>
+  `;
+
+  document.getElementById('logRows').innerHTML=(d.recent||[]).slice(0,60).map(r=>{
+    const det=typeof r.details==='object'?JSON.stringify(r.details).slice(0,80):'';
+    return `<tr><td>${fmtTs(r.ts)}</td><td>${r.stage}</td><td class="code-${r.code}">${r.code}</td><td class="mono">${shortAddr(r.leader_proxy)}</td><td class="mono" style="color:var(--muted)">${det}</td></tr>`;
+  }).join('');
+
+  document.getElementById('leaderRows').innerHTML=(d.leaders||[]).map(l=>
+    `<tr><td>${l.rank}</td><td class="mono" title="${l.proxy}">${shortAddr(l.proxy)}</td><td>${Number(l.score).toFixed(3)}</td><td>${Number(l.pnl_30d||0).toFixed(0)}</td><td>${(Number(l.win_rate||0)*100).toFixed(0)}%</td></tr>`
+  ).join('');
+}
+async function runDiscovery(){await fetch('/api/discovery/run',{method:'POST'});alert('Discovery started — watch leaders tab in ~30s');}
+connectWs();
+fetch('/api/state').then(r=>r.json()).then(render);
+</script>
+</body>
+</html>

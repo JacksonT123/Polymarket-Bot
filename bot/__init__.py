@@ -1,0 +1,1 @@
+"""Polymarket copy trader package."""
